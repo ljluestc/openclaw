@@ -92,7 +92,14 @@ export function loadExecApprovals(): ExecApprovalsFile {
     if (!(error instanceof ExecApprovalsStoreUnavailableError)) {
       throw error;
     }
-    warnFailClosed("exec approvals SQLite state is unavailable; denying host execution", error);
+    const errorMessage = formatErrorMessage(error);
+    warnFailClosed(
+      `exec approvals SQLite state is unavailable; denying host execution. ` +
+        `This typically indicates a permissions issue with the state directory or database corruption. ` +
+        `Error: ${errorMessage}. ` +
+        `Check that ~/.openclaw/state/ is accessible and not corrupted.`,
+      error,
+    );
     return createFailClosedExecApprovalsFallback();
   }
 }
