@@ -91,6 +91,9 @@ import type {
   PluginHookBeforeInstallResult,
   PluginHookResolveExecEnvContext,
   PluginHookResolveExecEnvEvent,
+  PluginHookBeforeSteeringEvent,
+  PluginHookBeforeSteeringResult,
+  PluginHookBeforeSteeringContext,
 } from "./hook-types.js";
 
 // Re-export types for consumers
@@ -155,6 +158,11 @@ const DEFAULT_MODIFYING_HOOK_TIMEOUT_MS_BY_HOOK: Partial<Record<PluginHookName, 
   // unresolved; timeout fail-opens with the original final answer.
   before_agent_finalize: 15_000,
   before_prompt_build: 15_000,
+  // The steering gate fires on the inbound injection path. A hung security
+  // plugin must not stall the steering lane; timeout fail-closes (block)
+  // because that is the security-correct default for an inbound-prompt gate,
+  // matching before_agent_run's policy. See runBeforeSteering below.
+  before_steering: 15_000,
   // Outbound modifying hooks run inside the serialized reply delivery lane.
   // A hung plugin must fail open so later hooks and queued replies can settle.
   message_sending: 15_000,
@@ -230,6 +238,11 @@ export function createHookRunner(
   const catchErrors = options.catchErrors ?? true;
   const failurePolicyByHook = {
     before_agent_run: "fail-closed",
+    // The steering gate mirrors before_agent_run's security posture. A throwing
+    // or timed-out handler must NOT silently inject a queued prompt that
+    // bypassed security. Operators can still override per-plugin via
+    // options.failurePolicyByHook when they intentionally opt out.
+    before_steering: "fail-closed",
     ...options.failurePolicyByHook,
   } satisfies Partial<Record<PluginHookName, HookFailurePolicy>>;
   const voidHookTimeoutMsByHook = {
@@ -1527,6 +1540,60 @@ export function createHookRunner(
     );
   }
 
+  /**
+   * Run before_steering hook.
+   *
+   * Fires once for every inbound message that is about to be injected into an
+   * active agent turn via the steering queue. Handlers run sequentially in
+   * priority order; any handler returning `block: true` is sticky, the merge
+   * yields a single decision, and remaining handlers are skipped (matches the
+   * policy used by `before_install`).
+   *
+   * Failure posture: fail-closed. A throwing handler is logged and the
+   * inferred block is sticky, so a misbehaving security plugin cannot be
+   * turned into a silent bypass by an exception.
+   */
+  async function runBeforeSteering(
+    event: PluginHookBeforeSteeringEvent,
+    ctx: PluginHookBeforeSteeringContext,
+  ): Promise<PluginHookBeforeSteeringResult | undefined> {
+    let blockingPluginId: string | undefined;
+    const merged = await runModifyingHook<"before_steering", PluginHookBeforeSteeringResult>(
+      "before_steering",
+      event,
+      ctx,
+      {
+        mergeResults: (acc, next, reg) => {
+          // Once any prior handler has decided to block, keep that decision.
+          // Later handlers still run so audit / instrumentation plugins can
+          // log, but their return values cannot un-block the injection.
+          if (acc?.block === true) {
+            return acc;
+          }
+          if (next.block === true) {
+            blockingPluginId = reg.pluginId;
+          }
+          // Last-defined blockReason / modifiedPrompt: the higher-priority
+          // (later-running) handler wins when several handlers contribute.
+          return {
+            block: stickyTrue(acc?.block, next.block),
+            blockReason: lastDefined(acc?.blockReason, next.blockReason),
+            modifiedPrompt: lastDefined(acc?.modifiedPrompt, next.modifiedPrompt),
+          };
+        },
+        shouldStop: (result) => result?.block === true,
+        terminalLabel: "block=true",
+      },
+    );
+    if (!merged) {
+      return undefined;
+    }
+    // Internal audit only — not exposed on the result type. Callers that need
+    // it for diagnostics should monitor the runner's debug log instead.
+    void blockingPluginId;
+    return merged;
+  }
+
   async function runResolveExecEnv(
     event: PluginHookResolveExecEnvEvent,
     ctx: PluginHookResolveExecEnvContext,
@@ -1607,6 +1674,7 @@ export function createHookRunner(
     runCronChanged,
     // Install hooks
     runBeforeInstall,
+    runBeforeSteering,
     runResolveExecEnv,
     // Utility
     hasHooks,

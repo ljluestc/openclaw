@@ -118,6 +118,7 @@ export type PluginHookName =
   | "reply_dispatch"
   | "before_install"
   | "before_agent_run"
+  | "before_steering"
   | "resolve_exec_env";
 
 const PLUGIN_HOOK_NAMES = [
@@ -161,6 +162,7 @@ const PLUGIN_HOOK_NAMES = [
   "reply_dispatch",
   "before_install",
   "before_agent_run",
+  "before_steering",
   "resolve_exec_env",
 ] as const satisfies readonly PluginHookName[];
 
@@ -1158,6 +1160,68 @@ export type PluginHookBeforeAgentRunEvent = {
 /** Result type for before_agent_run. Returns pass/block or void (= pass). */
 type PluginHookBeforeAgentRunResult = InputGateDecision | void;
 
+// ---------------------------------------------------------------------------
+// before_steering — Steering Gate Hook
+// ---------------------------------------------------------------------------
+
+/** Resolved queue policy that triggered this steering injection. Mirrors the normalized runtime `QueueMode` so plugins see the post-legacy-alias shape. `"queue"` config strings normalize to `"steer"` and `"steer-backlog"` config strings normalize to `"followup"`, so the hook event reports the normalized value. */
+export type PluginHookBeforeSteeringQueueMode = "steer" | "followup" | "collect" | "interrupt";
+
+/** Pi-runtime steering fan-out mode for this injection. */
+export type PluginHookBeforeSteeringSteeringMode = "all" | "one-at-a-time";
+
+/**
+ * Event payload for `before_steering`.
+ *
+ * Fired once for every message that is about to be injected into an active agent
+ * turn via the steering queue, including:
+ * - the auto-steer branch in `runReplyAgent` (queue modes `steer` | `followup`
+ *   (was `steer-backlog`) | `collect` | `interrupt` against a live embedded
+ *   run, with the host-side normalization applied),
+ * - the explicit `/steer` and `/tell` commands resolved to the active run.
+ *
+ * The hook can block the injection or rewrite the prompt before it reaches the
+ * LLM. Inbound messages that are not steered (idle sessions, follow-up
+ * enqueue) still fire `before_dispatch` / `before_agent_run` and are not
+ * affected.
+ */
+export type PluginHookBeforeSteeringEvent = {
+  /** Inbound text that was queued for steering. Treat as untrusted user input. */
+  prompt: string;
+  /** Session being steered, when the caller resolved one. */
+  sessionKey?: string;
+  /** Embedded-run session id, when the caller resolved an active run. */
+  sessionId?: string;
+  /** Resolved queue mode that triggered this injection. */
+  queueMode?: PluginHookBeforeSteeringQueueMode;
+  /** Pi-runtime steering fan-out mode. */
+  steeringMode?: PluginHookBeforeSteeringSteeringMode;
+  /** Debounce applied to the queue injection, when configured. */
+  debounceMs?: number;
+  /** Channel-scoped sender id when the host resolved one. */
+  senderId?: string;
+  /** Originating channel for the steering message (e.g. `discord`). */
+  channelId?: string;
+  /** Wall-clock time the host observed the inbound, when available. */
+  timestamp?: number;
+};
+
+/**
+ * Result type for `before_steering`. A handler may also return `void` to opt in
+ * without blocking or rewriting.
+ */
+export type PluginHookBeforeSteeringResult = {
+  /** When `true`, the host does not inject the message into the steering queue. */
+  block?: boolean;
+  /** Audit-only detail surfaced in logs and diagnostics. Not user-facing. */
+  blockReason?: string;
+  /** Replacement text used in place of `event.prompt` for the injection. */
+  modifiedPrompt?: string;
+};
+
+/** Context for `before_steering`. Mirrors the agent-context fields available to neighbouring inbound gates. */
+export type PluginHookBeforeSteeringContext = PluginHookAgentContext;
+
 export type PluginHookResolveExecEnvEvent = {
   sessionKey?: string;
   toolName: "exec";
@@ -1354,6 +1418,10 @@ export type PluginHookHandlerMap = {
     event: PluginHookResolveExecEnvEvent,
     ctx: PluginHookResolveExecEnvContext,
   ) => Promise<Record<string, string> | void> | Record<string, string> | void;
+  before_steering: (
+    event: PluginHookBeforeSteeringEvent,
+    ctx: PluginHookBeforeSteeringContext,
+  ) => Promise<PluginHookBeforeSteeringResult | void> | PluginHookBeforeSteeringResult | void;
 };
 
 export type PluginHookRegistration<K extends PluginHookName = PluginHookName> = {
