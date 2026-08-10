@@ -6,6 +6,7 @@ import {
 } from "../../agents/tools/sessions-helpers.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
+import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { isNativeCommandTurn, resolveCommandTurnContext } from "../command-turn-context.js";
 import { applyCommandTextToParams } from "./command-context-rewrite.js";
 import { rejectUnauthorizedCommand } from "./command-gates.js";
@@ -143,7 +144,60 @@ export const handleSteerCommand: CommandHandler = async (params, allowTextComman
     );
   }
 
-  const queueOutcome = await queueEmbeddedAgentMessageWithOutcomeAsync(sessionId, message, {
+  // before_steering gate: same as the auto-steer branch in runReplyAgent —
+  // security plugins may rewrite the prompt or block the injection entirely.
+  // On block we fall through to the existing "no active run" path so the
+  // `/steer` UX matches whether the run is missing or refused by security.
+  let steeringMessage = message;
+  const hookRunner = getGlobalHookRunner();
+  if (hookRunner?.hasHooks("before_steering")) {
+    let steerHookResult;
+    try {
+      steerHookResult = await hookRunner.runBeforeSteering(
+        {
+          prompt: message,
+          ...(targetSessionKey ? { sessionKey: targetSessionKey } : {}),
+          sessionId,
+          queueMode: "steer",
+          steeringMode: "all",
+          debounceMs: 0,
+          ...(params.ctx.SenderId ? { senderId: params.ctx.SenderId } : {}),
+          ...(params.ctx.Provider ? { channelId: params.ctx.Provider } : {}),
+          timestamp: Date.now(),
+        },
+        {
+          ...(targetSessionKey ? { sessionKey: targetSessionKey } : {}),
+          sessionId,
+          trigger: "user",
+          channel: params.ctx.Provider,
+          accountId: params.opts?.sourceReplyDeliveryMode ? undefined : undefined,
+          ...(params.ctx.SenderId ? { senderId: params.ctx.SenderId } : {}),
+        },
+      );
+    } catch (err) {
+      logVerbose(
+        `steer: before_steering hook runner threw for session ${sessionId}; treating as block: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      steerHookResult = { block: true, blockReason: "before_steering hook threw" };
+    }
+    if (steerHookResult?.block) {
+      const blockedReason = steerHookResult.blockReason?.trim() ?? "no reason supplied";
+      logVerbose(
+        `steer: before_steering blocked steering injection for session ${sessionId}: ${blockedReason}`,
+      );
+      return continueWithSteerFallback(
+        params,
+        message,
+        `steer: ${blockedReason}; continuing with /steer payload as a normal prompt`,
+      );
+    }
+    if (typeof steerHookResult?.modifiedPrompt === "string") {
+      steeringMessage = steerHookResult.modifiedPrompt;
+    }
+  }
+  const queueOutcome = await queueEmbeddedAgentMessageWithOutcomeAsync(sessionId, steeringMessage, {
     steeringMode: "all",
     isInboundUserMessage: true,
     debounceMs: 0,

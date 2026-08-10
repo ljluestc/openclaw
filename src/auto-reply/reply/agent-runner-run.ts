@@ -18,6 +18,7 @@ import {
   buildAgentHookContextChannelFields,
   buildAgentHookContextIdentityFields,
 } from "../../plugins/hook-agent-context.js";
+import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { markReplyPayloadForSourceSuppressionDelivery } from "../reply-payload.js";
 import type { OriginatingChannelType } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
@@ -273,72 +274,165 @@ export async function runReplyAgent(
       typing.cleanup();
       return buildHandledBeforeAgentReplyPayloads(hookResult.reply);
     }
-    const steerOutcome = await queueEmbeddedAgentMessageWithOutcomeAsync(
-      steerSessionId,
-      followupRun.prompt,
-      {
-        steeringMode: "all",
-        isInboundUserMessage: true,
-        ...(followupRun.images?.length ? { images: followupRun.images } : {}),
-        ...(followupRun.imageOrder?.length ? { imageOrder: followupRun.imageOrder } : {}),
-        ...(followupRun.media?.length ? { media: followupRun.media } : {}),
-        ...(turnAdoptionLifecycle ? { waitForTranscriptCommit: true } : {}),
-        ...(resolvedQueue.debounceMs !== undefined ? { debounceMs: resolvedQueue.debounceMs } : {}),
-        ...(followupRun.run.sourceReplyDeliveryMode
-          ? { sourceReplyDeliveryMode: followupRun.run.sourceReplyDeliveryMode }
-          : {}),
-        taskSuggestionDeliveryMode: followupRun.run.taskSuggestionDeliveryMode,
-        ...(followupRun.userTurnTranscriptRecorder
-          ? { userTurnTranscriptRecorder: followupRun.userTurnTranscriptRecorder }
-          : {}),
-      },
-    );
-    if (steerOutcome.queued) {
-      if (replyOperationRunState) {
-        // Transcript commit has already transferred this turn to the active
-        // session. Keep that acceptance even if ingress adoption is later lost:
-        // the losing dispatch must neither replay nor emit its own fallback.
-        replyOperationRunState.admission = { status: "accepted", mode: "steer" };
-      }
-      activeReplyOperation?.recordActivity();
+    // before_steering gate: security plugins may inspect or rewrite the
+    // queued prompt or block the injection entirely. On block we mark the
+    // run as rejected and let resolveActiveRunQueueAction route the inbound
+    // through the existing follow-up / drop policy (no silent drop).
+    let steeringPrompt = followupRun.prompt;
+    let steeringBlockedBySecurity = false;
+    const hookRunner = getGlobalHookRunner();
+    if (hookRunner?.hasHooks("before_steering")) {
+      const steerHookContext = {
+        runId: steerRunId,
+        agentId: followupRun.run.agentId,
+        sessionKey: sessionKey ?? followupRun.run.sessionKey,
+        sessionId: steerSessionId,
+        workspaceDir: followupRun.run.workspaceDir,
+        modelProviderId: followupRun.run.provider,
+        modelId: followupRun.run.model,
+        trigger,
+        ...buildAgentHookContextChannelFields({
+          sessionKey: sessionKey ?? followupRun.run.sessionKey,
+          messageChannel: followupRun.originatingChannel,
+          messageProvider: followupRun.run.messageProvider,
+          currentChannelId: followupRun.originatingChatId,
+          messageTo: followupRun.originatingTo,
+          senderId: followupRun.run.senderId,
+        }),
+        ...buildAgentHookContextIdentityFields({
+          trigger,
+          senderId: followupRun.run.senderId,
+          chatId: followupRun.originatingChatId,
+          channelContext: followupRun.run.channelContext,
+        }),
+      };
+      let steerHookResult;
       try {
-        await turnAdoptionLifecycle?.onAdopted();
-      } catch (error) {
-        if (isIngressAdoptionLostError(error)) {
-          // Claim was tombstoned/superseded/guillotined after transcript commit.
-          // Cancel the active run so steered tools do not keep executing. Keep
-          // admission accepted and do not rethrow: ingress ownership is gone,
-          // so replay or a local no-visible-reply fallback would duplicate or
-          // misreport the already-injected user turn.
-          const abortKey = sessionKey ?? queueKey;
-          if (abortKey) {
-            replyRunRegistry.abort(abortKey);
-          }
-          logVerbose(
-            `queue: active session ${steerSessionId} adoption lost after transcript commit (${error.code}); aborting steered turn without ingress replay`,
-          );
-          typing.cleanup();
-          return undefined;
-        }
-        // Ordinary callback failures: transcript-backed steering is irrevocable.
-        logVerbose(
-          `queue: active session ${steerSessionId} adoption finalizer failed after transcript commit: ${String(
-            error,
-          )}`,
+        steerHookResult = await hookRunner.runBeforeSteering(
+          {
+            prompt: followupRun.prompt,
+            sessionKey: sessionKey ?? followupRun.run.sessionKey,
+            sessionId: steerSessionId,
+            queueMode: resolvedQueue.mode,
+            steeringMode: "all",
+            ...(resolvedQueue.debounceMs !== undefined
+              ? { debounceMs: resolvedQueue.debounceMs }
+              : {}),
+            ...(followupRun.run.senderId ? { senderId: followupRun.run.senderId } : {}),
+            ...(followupRun.originatingChannel
+              ? { channelId: followupRun.originatingChannel }
+              : {}),
+            timestamp: Date.now(),
+          },
+          steerHookContext,
         );
+      } catch (err) {
+        // Fail-closed: a throwing handler must block the injection. The
+        // runner throws for hooks that aren't explicitly fail-open; we
+        // catch here so the inbound still gets routed via the follow-up
+        // queue rather than silently disappearing.
+        logVerbose(
+          `queue: before_steering hook runner threw for session ${steerSessionId}; treating as block: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        steerHookResult = { block: true, blockReason: "before_steering hook threw" };
       }
-      if (followupRun.currentInboundAudio === true) {
-        activeReplyOperation?.markAcceptedSteeredInboundAudio();
+      if (steerHookResult?.block) {
+        const blockedReason = steerHookResult.blockReason?.trim() ?? "no reason supplied";
+        logVerbose(
+          `queue: before_steering blocked steering injection for session ${steerSessionId} (runId=${steerRunId}): ${blockedReason}`,
+        );
+        if (replyOperationRunState) {
+          // "active-run" is the closest existing skip-reason: there was an
+          // active run, but the security gate refused to inject into it.
+          replyOperationRunState.admission = { status: "skipped", reason: "active-run" };
+        }
+        steeringBlockedBySecurity = true;
+        shouldQueueAfterSteerRejection = true;
+      } else if (typeof steerHookResult?.modifiedPrompt === "string") {
+        steeringPrompt = steerHookResult.modifiedPrompt;
       }
-      await touchActiveSessionEntry();
-      typing.cleanup();
-      return undefined;
     }
-    // The active runtime still owns the turn but cannot prove transcript adoption.
-    // Keep the inbound message queued so ingress can finalize after a later run.
-    shouldQueueAfterSteerRejection = steerOutcome.reason === "transcript_commit_wait_unsupported";
-    const summary = formatEmbeddedAgentQueueFailureSummary(steerOutcome);
-    logVerbose(`queue: active session ${steerSessionId} rejected steering injection: ${summary}`);
+    let steerOutcome;
+    if (!steeringBlockedBySecurity) {
+      steerOutcome = await queueEmbeddedAgentMessageWithOutcomeAsync(
+        steerSessionId,
+        followupRun.prompt,
+        {
+          steeringMode: "all",
+          isInboundUserMessage: true,
+          ...(followupRun.images?.length ? { images: followupRun.images } : {}),
+          ...(followupRun.imageOrder?.length ? { imageOrder: followupRun.imageOrder } : {}),
+          ...(followupRun.media?.length ? { media: followupRun.media } : {}),
+          ...(turnAdoptionLifecycle ? { waitForTranscriptCommit: true } : {}),
+          ...(resolvedQueue.debounceMs !== undefined
+            ? { debounceMs: resolvedQueue.debounceMs }
+            : {}),
+          ...(followupRun.run.sourceReplyDeliveryMode
+            ? { sourceReplyDeliveryMode: followupRun.run.sourceReplyDeliveryMode }
+            : {}),
+          taskSuggestionDeliveryMode: followupRun.run.taskSuggestionDeliveryMode,
+          ...(followupRun.userTurnTranscriptRecorder
+            ? { userTurnTranscriptRecorder: followupRun.userTurnTranscriptRecorder }
+            : {}),
+        },
+      );
+      if (steerOutcome.queued) {
+        if (replyOperationRunState) {
+          // Transcript commit has already transferred this turn to the active
+          // session. Keep that acceptance even if ingress adoption is later lost:
+          // the losing dispatch must neither replay nor emit its own fallback.
+          replyOperationRunState.admission = { status: "accepted", mode: "steer" };
+        }
+        activeReplyOperation?.recordActivity();
+        try {
+          await turnAdoptionLifecycle?.onAdopted();
+        } catch (error) {
+          if (isIngressAdoptionLostError(error)) {
+            // Claim was tombstoned/superseded/guillotined after transcript commit.
+            // Cancel the active run so steered tools do not keep executing. Keep
+            // admission accepted and do not rethrow: ingress ownership is gone,
+            // so replay or a local no-visible-reply fallback would duplicate or
+            // misreport the already-injected user turn.
+            const abortKey = sessionKey ?? queueKey;
+            if (abortKey) {
+              replyRunRegistry.abort(abortKey);
+            }
+            logVerbose(
+              `queue: active session ${steerSessionId} adoption lost after transcript commit (${error.code}); aborting steered turn without ingress replay`,
+            );
+            typing.cleanup();
+            return undefined;
+          }
+          // Ordinary callback failures: transcript-backed steering is irrevocable.
+          logVerbose(
+            `queue: active session ${steerSessionId} adoption finalizer failed after transcript commit: ${String(
+              error,
+            )}`,
+          );
+        }
+        if (followupRun.currentInboundAudio === true) {
+          activeReplyOperation?.markAcceptedSteeredInboundAudio();
+        }
+        await touchActiveSessionEntry();
+        typing.cleanup();
+        return undefined;
+      }
+      // The active runtime still owns the turn but cannot prove transcript adoption.
+      // Keep the inbound message queued so ingress can finalize after a later run.
+      shouldQueueAfterSteerRejection =
+        !steeringBlockedBySecurity && steerOutcome.reason === "transcript_commit_wait_unsupported";
+      const summary = formatEmbeddedAgentQueueFailureSummary(steerOutcome);
+      logVerbose(`queue: active session ${steerSessionId} rejected steering injection: ${summary}`);
+    } else {
+      // The before_steering hook blocked the injection. Emit the same verbose
+      // line pattern used by the runtime-rejected branch so operators see a
+      // consistent log shape for steering rejections.
+      logVerbose(
+        `queue: active session ${steerSessionId} skipped steering injection (before_steering blocked)`,
+      );
+    }
   }
 
   const activeRunQueueAction = resolveActiveRunQueueAction({
