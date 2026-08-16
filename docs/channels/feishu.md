@@ -746,3 +746,61 @@ Topic-group session routing is covered under
 - [Groups](/channels/groups) - group chat behavior and mention gating
 - [Channel Routing](/channels/channel-routing) - session routing for messages
 - [Security](/gateway/security) - access model and hardening
+
+### Polls
+
+Feishu's bot API does not expose a native poll message type the way
+Telegram does, so XAgent implements Feishu polls as interactive Card 2.0
+cards backed by `card.action.trigger` callbacks.
+
+- The `sendPoll` outbound adapter (`extensions/feishu/src/poll-adapter.ts`)
+  posts a Card 2.0 message with one button per option.
+- Each button click fires a `feishu.poll.vote` callback; the webhook
+  handler in `extensions/feishu/src/poll-action.ts` resolves the
+  canonical `FeishuPollDefinition` in the in-plugin vote ledger
+  (`poll-store.ts`), records the vote with single-choice last-wins or
+  multi-select additive semantics, then **PATCHes the original message**
+  with a tally view.
+- Anonymous votes are NOT a platform concept for Feishu polls — voter
+  identity comes from the `card.action.trigger` operator `open_id`.
+  Treat poll results as visible to anyone who can see the chat message.
+- `pollDurationSeconds` and `anonymous` flags are NOT supported (the
+  adapter reports `supportsPollDurationSeconds: false` /
+  `supportsAnonymousPolls: false`); the upstream tool layer must
+  silently drop those campaign params when landing on Feishu.
+- Process restart loses live votes. Card actions and the runtime
+  webhook token cache do not survive restarts, so the in-vote tally is
+  genuinely loss-coupled — owners narrate the trade-off in the operator
+  docs and the agent prompt hint.
+
+Operator setup:
+
+```yaml
+channels:
+  feishu:
+    accounts:
+      default:
+        enabled: true
+        appId: cli_xxx
+        appSecret: ${FEISHU_APP_SECRET}
+```
+
+Then in any Feishu chat ask the agent conversationally:
+
+> /polling — Create a quick poll: "Which day works for the standup?"
+> with options Monday, Tuesday, Wednesday.
+
+The agent posts a Card 2.0 poll; group members click options; tallies
+update on click; the agent can announce the result once voting settles.
+
+Architecture notes for reviewers:
+
+- `extensions/feishu/src/poll-card.ts` is the pure card renderer (no I/O).
+- `extensions/feishu/src/poll-store.ts` is the in-plugin vote ledger with
+  a 30-day TTL and a 1000-poll / 2048-vote-per-poll cap. The cap mirrors
+  the precedent set by `extensions/msteams/src/polls.ts`.
+- `extensions/feishu/src/poll-action.ts` is the only file that talks to
+  Feishu's `im.v1.message.patch` endpoint; everything else is platform-
+  agnostic.
+- `extensions/feishu/src/card-action.ts` carries one new dispatch branch
+  (≈12 lines) to route the poll envelope to the action handler.
