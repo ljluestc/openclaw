@@ -89,6 +89,7 @@ import { chunkFeishuMarkdown } from "./markdown.js";
 import { messageActionTargetAliases } from "./message-action-contract.js";
 import { readNativeFeishuCardJson } from "./native-card.js";
 import { resolveFeishuGroupToolPolicy } from "./policy.js";
+import { sendPollFeishu } from "./poll-adapter.js";
 import {
   assertFeishuCardWithinEnvelope,
   buildFeishuPresentationCard,
@@ -971,7 +972,10 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
       },
       capabilities: {
         chatTypes: ["direct", "channel"],
-        polls: false,
+        // Polls are rendered as interactive Card Kit cards (Feishu has no
+        // native poll message type). Vote storage is in-plugin — see
+        // `poll-store.ts`. See `docs/channels/feishu.md` for behavior notes.
+        polls: true,
         threads: true,
         media: true,
         tts: {
@@ -989,6 +993,10 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
           "- Feishu targeting: omit `target` to reply to the current conversation (auto-inferred). Explicit targets: `user:open_id` or `chat:chat_id`.",
           "- Feishu supports interactive cards plus native image, file, audio, and video/media delivery.",
           "- Feishu supports `send`, `read`, `edit`, `thread-reply`, pins, and channel/member lookup, plus reactions when enabled.",
+          // Tell the model that poll creation works through Card Kit even
+          // though Feishu lacks a native poll message — without this hint
+          // the model often replies "Feishu does not support polls".
+          '- Feishu polls: use the shared `message` tool with `action: "poll"` or a `create_poll` tool call. Polls are rendered as interactive cards; click the option buttons in-chat to vote.',
         ],
       },
       groups: {
@@ -1855,6 +1863,14 @@ export const feishuPlugin: ChannelPlugin<ResolvedFeishuAccount, FeishuProbeResul
       chunkerMode: "markdown",
       textChunkLimit: 4000,
       sanitizeText: ({ text }) => sanitizeAssistantVisibleText(text),
+      // Feishu polls are posted as Card 2.0 messages — never as native
+      // poll payloads (Feishu does not expose a native poll endpoint in
+      // the bot API). See `poll-adapter.ts` and the matched poll envelope
+      // decoder in `poll-action.ts`.
+      pollMaxOptions: 12,
+      supportsPollDurationSeconds: false,
+      supportsAnonymousPolls: false,
+      sendPoll: (ctx) => sendPollFeishu(ctx),
       presentationCapabilities: {
         supported: true,
         buttons: true,

@@ -18,6 +18,9 @@ import {
 } from "./card-ux-approval.js";
 import { normalizeFeishuChatType, resolveFeishuChatType } from "./chat-type.js";
 import { createFeishuClient } from "./client.js";
+import { FEISHU_POLL_VOTE_ACTION, handleFeishuPollVote } from "./poll-action.js";
+import { buildFeishuPollDefinitionFromCard } from "./poll-action.js";
+import { readFeishuPollTotals } from "./poll-store.js";
 import { sendCardFeishu, sendMessageFeishu } from "./send.js";
 
 export type FeishuCardActionEvent = {
@@ -424,6 +427,49 @@ export async function handleFeishuCardAction(params: {
           text: "Cancelled.",
           accountId,
         });
+        completeFeishuCardAction(event.token, account.accountId);
+        return;
+      }
+
+      if (envelope.a === FEISHU_POLL_VOTE_ACTION) {
+        const pollDefinition = buildFeishuPollDefinitionFromCard(event);
+        if (!pollDefinition) {
+          log(
+            `feishu[${account.accountId}]: poll vote rejected from ${event.operator.open_id}: missing poll definition`,
+          );
+          completeFeishuCardAction(event.token, account.accountId);
+          return;
+        }
+        if (!readFeishuPollTotals(pollDefinition.pollId)) {
+          log(
+            `feishu[${account.accountId}]: poll vote from ${event.operator.open_id} references unknown poll id`,
+          );
+          await sendMessageFeishu({
+            cfg,
+            to: resolveCallbackTarget(event),
+            text: "⚠️ This poll is no longer active on the bot side. The owner's process may have restarted.",
+            accountId,
+          });
+          completeFeishuCardAction(event.token, account.accountId);
+          return;
+        }
+        try {
+          await handleFeishuPollVote({
+            cfg,
+            event,
+            definition: pollDefinition,
+            accountId,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "unknown";
+          log(`feishu[${account.accountId}]: poll vote failed: ${message}`);
+          await sendMessageFeishu({
+            cfg,
+            to: resolveCallbackTarget(event),
+            text: `⚠️ Vote could not be recorded: ${message}`,
+            accountId,
+          });
+        }
         completeFeishuCardAction(event.token, account.accountId);
         return;
       }
