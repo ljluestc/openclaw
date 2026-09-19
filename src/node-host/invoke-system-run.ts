@@ -231,12 +231,26 @@ export async function resolveEffectiveSystemRunExecPolicy(params: {
     ask: modePolicy.ask,
     requireSocket: params.requireSocket,
   });
+  const effectiveSecurity = minSecurity(modePolicy.security, approvals.agent.security);
+  const effectiveAsk = maxAsk(modePolicy.ask, approvals.agent.ask);
+  
+  // Diagnostic logging to help identify policy resolution mismatches
+  if (effectiveSecurity !== modePolicy.security || effectiveSecurity !== approvals.agent.security) {
+    logWarn(
+      `Exec policy resolution mismatch detected: ` +
+        `modePolicy.security=${modePolicy.security}, ` +
+        `approvals.agent.security=${approvals.agent.security}, ` +
+        `effective=${effectiveSecurity}. ` +
+        `This may indicate SQLite state unavailability or config/approvals misalignment.`,
+    );
+  }
+  
   return {
     agentExec,
     globalExec,
     approvals,
-    security: minSecurity(modePolicy.security, approvals.agent.security),
-    ask: maxAsk(modePolicy.ask, approvals.agent.ask),
+    security: effectiveSecurity,
+    ask: effectiveAsk,
     autoReview: modePolicy.autoReview,
   };
 }
