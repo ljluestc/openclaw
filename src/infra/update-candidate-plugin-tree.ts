@@ -539,6 +539,10 @@ export async function copyUpdateCandidatePluginTrees(
         maxBytes: entry.size,
         mode: entry.mode | 0o600,
         sourceHardlinks: "allow",
+        // The rehearsal snapshot is discarded after the update and never survives
+        // a crash. Per-file fsyncs cost two disk flushes per plugin file (35k+ files
+        // on real installs), which turned slow-fsync hosts into hour-long copies.
+        durable: false,
         assertBeforeMutation: () =>
           assertUpdateCandidatePluginEntryStat(
             entry,
