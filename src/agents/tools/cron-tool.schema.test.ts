@@ -6,7 +6,7 @@ import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coerc
 // Cron tool schema tests cover the provider-facing parameter shape and runtime
 // validation compatibility for cron jobs.
 import { Value } from "typebox/value";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createCronTool } from "./cron-tool.js";
 
@@ -575,5 +575,70 @@ describe("createCronToolSchema with cron triggers disabled", () => {
         },
       }),
     ).toBe(true);
+  });
+});
+
+describe("createCronTool with tools.facets.automations (#156957)", () => {
+  const coreConfig = { tools: { facets: { automations: "core" } } } as OpenClawConfig;
+  const coreQueryActions = ["get", "list", "next_check", "runs", "status"];
+
+  it("keeps only the read-only query surface and drops the job definition", () => {
+    const tool = createCronTool({ config: coreConfig, agentId: "main" });
+    const schema = tool.parameters as unknown as Record<string, unknown>;
+    const full = createCronTool({ agentId: "main" });
+    expect((propertyAt(schema, "action")?.enum as string[] | undefined)?.toSorted()).toEqual(
+      coreQueryActions,
+    );
+    expect(Object.keys(schema.properties as object)).not.toContain("job");
+    expect(tool.description).not.toContain("SCHEDULE:");
+    // The core facet exists to shrink resident context; keep it well under the full schema.
+    const size = (value: unknown) => JSON.stringify(value).length;
+    expect(size(tool.parameters) + tool.description.length).toBeLessThan(
+      (size(full.parameters) + full.description.length) / 5,
+    );
+  });
+
+  it("lets an agent entry override the global facet in both directions", () => {
+    const agentCore = createCronTool({
+      config: {
+        tools: { facets: { automations: "full" } },
+        agents: { list: [{ id: "main", tools: { facets: { automations: "core" } } }] },
+      } as OpenClawConfig,
+      agentId: "main",
+    }).parameters as unknown as Record<string, unknown>;
+    expect(Object.keys(agentCore.properties as object)).not.toContain("job");
+
+    const agentFull = createCronTool({
+      config: {
+        tools: { facets: { automations: "core" } },
+        agents: { list: [{ id: "ops", tools: { facets: { automations: "full" } } }] },
+      } as OpenClawConfig,
+      agentId: "ops",
+    }).parameters as unknown as Record<string, unknown>;
+    expect(Object.keys(agentFull.properties as object)).toContain("job");
+  });
+
+  it("rejects management actions before calling the Gateway", async () => {
+    const callGatewayTool = vi.fn();
+    const tool = createCronTool({ config: coreConfig, agentId: "main" }, { callGatewayTool });
+    await expect(
+      tool.execute("call-1", {
+        action: "add",
+        job: {
+          schedule: { kind: "every", everyMs: 60_000 },
+          payload: { kind: "systemEvent", text: "x" },
+        },
+      }),
+    ).rejects.toThrow('tools.facets.automations="core"');
+    expect(callGatewayTool).not.toHaveBeenCalled();
+  });
+
+  it("keeps self-remove for automation-run sessions", () => {
+    const schema = createCronTool({
+      config: coreConfig,
+      agentId: "main",
+      selfRemoveOnlyJobId: "job-1",
+    }).parameters as unknown as Record<string, unknown>;
+    expect(propertyAt(schema, "action")?.enum).toContain("remove");
   });
 });

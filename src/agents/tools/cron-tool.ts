@@ -16,6 +16,7 @@ import { CRON_MANAGEMENT_METHODS } from "../../gateway/cron-creator-authority-gr
 import { recordCronNextCheckProposal } from "../../infra/agent-run-registry.js";
 import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
 import { isRecord } from "../../utils.js";
+import { resolveAgentConfig } from "../agent-scope-config.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
 import {
   bindCronManagementGrant,
@@ -53,7 +54,9 @@ import { CronToolOutputSchema } from "./cron-tool-output-schema.js";
 import {
   assertCronPacingInput,
   createCronToolSchema,
+  CRON_CORE_FACET_ACTIONS,
   CRON_TOOL_LIST_MAX_LIMIT,
+  type CronToolFacet,
 } from "./cron-tool-schema.js";
 import { listCronSelfJob } from "./cron-tool-self-list.js";
 import {
@@ -100,6 +103,28 @@ const CRON_SELF_REMOVE_SCOPE_ERROR = "Automations tool is restricted to the curr
 function readCronSelfRemoveOnlyJobId(opts: CronToolOptions | undefined) {
   return opts?.selfRemoveOnlyJobId?.trim() || undefined;
 }
+
+/**
+ * Operator opt-in from tools.facets.automations; the agent entry overrides the
+ * global value. Automation-run sessions keep their self-remove surface.
+ */
+function resolveCronToolFacet(opts: CronToolOptions | undefined): CronToolFacet {
+  if (readCronSelfRemoveOnlyJobId(opts)) {
+    return "full";
+  }
+  const config = opts?.config;
+  const agentFacet =
+    config && opts?.agentId
+      ? resolveAgentConfig(config, opts.agentId)?.tools?.facets?.automations
+      : undefined;
+  return agentFacet ?? config?.tools?.facets?.automations ?? "full";
+}
+
+const CRON_CORE_FACET_DESCRIPTION = `Gateway scheduler (read-only here): inspect reminders, loops, and recurring jobs. Never exec sleep/poll as timer.
+
+ACTIONS: status | list [includeDisabled,limit?,offset?] (compact summaries with timing; use nextOffset for the next page) | get jobId (full schedule, payload, and delivery details) | runs jobId = history | next_check in:"30m" (own paced run only; sets its next delay).
+
+This agent is configured with tools.facets.automations="core": creating, updating, removing, running, and waking automations is unavailable. When asked, say so and point to the Automations page or \`openclaw cron\`. Other turns see only caller-visible jobs; an empty list does not prove global absence. jobId canonical (id=compat).`;
 
 function isCronSelfIntrospectionAction(action: string) {
   return action === "status" || action === "list";
@@ -225,17 +250,22 @@ export function createCronTool(opts?: CronToolOptions, deps?: CronToolDeps): Any
   const requesterAuthority = bindCronRequesterGrant(opts?.runId);
   // Trigger-gated surfaces default on, matching cron/service/jobs-validation.ts.
   const triggersEnabled = opts?.config?.cron?.triggers?.enabled !== false;
+  // Management-authority turns keep their granted surface regardless of facet.
+  const facet = managementAuthority ? "full" : resolveCronToolFacet(opts);
   const tool: AnyAgentTool = {
     label: "Automations",
     name: AUTOMATIONS_TOOL_NAME,
     displaySummary: CRON_TOOL_DISPLAY_SUMMARY,
     description: managementAuthority?.managementOnly
       ? 'Manage any existing automation on this Gateway with the admitted automation management authority. Actions: list [includeDisabled,limit,offset] (compact summaries with timing; follow nextOffset); get jobId (full schedule, payload, and delivery details); update jobId job (partial patch, null clears); run jobId (runMode:"force" runs now); remove jobId. Creator attribution and scheduled execution policy stay intact. Use the Automations page for other actions.'
-      : buildCronToolDescription({ triggersEnabled }),
+      : facet === "core"
+        ? CRON_CORE_FACET_DESCRIPTION
+        : buildCronToolDescription({ triggersEnabled }),
     outputSchema: CronToolOutputSchema,
     parameters: createCronToolSchema({
       agentSessionKey: opts?.agentSessionKey,
       triggersEnabled,
+      facet,
       management: managementAuthority
         ? managementAuthority.managementOnly
           ? "only"
@@ -279,6 +309,14 @@ export function createCronTool(opts?: CronToolOptions, deps?: CronToolDeps): Any
       ) {
         throw new Error(
           "This turn can only list, get, update, run, or remove automations. Use the Automations page for other actions.",
+        );
+      }
+      if (
+        facet === "core" &&
+        !CRON_CORE_FACET_ACTIONS.some((coreAction) => coreAction === action)
+      ) {
+        throw new Error(
+          `Automations action "${action}" is unavailable: this agent uses tools.facets.automations="core" (read-only). Use the Automations page or \`openclaw cron\`, or set the facet to "full".`,
         );
       }
       assertCronSelfRemoveScope(opts, action, params);

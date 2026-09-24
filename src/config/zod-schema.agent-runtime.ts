@@ -515,6 +515,14 @@ const ToolSearchSchema = z
   ])
   .optional();
 
+const ToolFacetsSchema = z
+  .object({
+    /** Resident `automations` schema: "core" keeps query actions only; "full" (default) keeps every action. */
+    automations: z.enum(["core", "full"]).optional(),
+  })
+  .strict()
+  .optional();
+
 const CodeModeSchema = z
   .union([
     z.boolean(),
@@ -697,6 +705,8 @@ const AgentToolsSchema = z
     codeMode: CodeModeSchema,
     /** Per-agent swarm override; merges over the top-level tools.swarm config. */
     swarm: SwarmSchema,
+    /** Per-agent tool schema facets; each key overrides the top-level tools.facets value. */
+    facets: ToolFacetsSchema,
     /** Per-agent elevated exec gate (can only further restrict global tools.elevated). */
     elevated: z
       .object({
@@ -786,6 +796,8 @@ export const ToolsSchema = z
     codeMode: CodeModeSchema,
     /** Collector-mode subagents and wait controls. */
     swarm: SwarmSchema,
+    /** Opt-in narrowing of large multi-action tool schemas. */
+    facets: ToolFacetsSchema,
     /** Message tool configuration. */
     message: MessageToolConfigSchema,
     agentToAgent: z

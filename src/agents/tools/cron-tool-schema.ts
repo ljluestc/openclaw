@@ -34,6 +34,10 @@ const CRON_ACTIONS = [
   "wake",
 ] as const;
 
+/** Read-only actions kept by the opt-in `tools.facets.automations: "core"` schema. */
+export const CRON_CORE_FACET_ACTIONS = ["status", "list", "get", "runs", "next_check"] as const;
+export type CronToolFacet = "core" | "full";
+
 const CRON_SCHEDULE_KINDS = ["at", "every", "cron", "stream"] as const;
 // When cron.triggers.enabled is explicitly false, the scheduler rejects
 // stream schedules, script payloads, and condition triggers, so the
@@ -56,6 +60,12 @@ type CronToolSchemaOptions = {
    * config-less callers keep the full surface.
    */
   triggersEnabled?: boolean;
+  /**
+   * "core" advertises only the read-only query actions and drops the job
+   * definition, which is most of this schema. Management-authority turns keep
+   * their own surface. Defaults to "full".
+   */
+  facet?: CronToolFacet;
 };
 
 function nullableStringSchema(description: string) {
@@ -324,6 +334,9 @@ export function createCronToolSchema(options?: CronToolSchemaOptions): TSchema {
   const triggersEnabled = options?.triggersEnabled !== false;
   const management = Boolean(options?.management);
   const managementOnly = options?.management === "only";
+  if (!management && options?.facet === "core") {
+    return createCronCoreFacetSchema();
+  }
   const job = Type.Optional(
     Type.Object(
       {
@@ -435,4 +448,30 @@ export function createCronToolSchema(options?: CronToolSchemaOptions): TSchema {
   return managementOnly
     ? Type.Omit(schema, ["in", "text", "mode", "contextMessages", "sessionKey"])
     : schema;
+}
+
+function createCronCoreFacetSchema(): TSchema {
+  return Type.Object(
+    {
+      action: stringEnum(CRON_CORE_FACET_ACTIONS),
+      ...gatewayCallOptionSchemaProperties(),
+      includeDisabled: Type.Optional(Type.Boolean()),
+      limit: optionalPositiveIntegerSchema({
+        maximum: CRON_TOOL_LIST_MAX_LIMIT,
+        description: 'Maximum jobs returned by action="list"',
+      }),
+      offset: optionalNonNegativeIntegerSchema({
+        description: 'Job offset for action="list"; use nextOffset to load the next page',
+      }),
+      jobId: Type.Optional(Type.String()),
+      id: Type.Optional(Type.String()),
+      in: Type.Optional(
+        Type.String({
+          description: 'Relative duration for action="next_check" (for example, "15m")',
+        }),
+      ),
+      agentId: Type.Optional(Type.String({ description: 'Agent filter for action="list".' })),
+    },
+    { additionalProperties: true },
+  );
 }

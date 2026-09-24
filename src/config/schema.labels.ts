@@ -167,6 +167,8 @@ export const FIELD_LABELS: Record<string, string> = {
   "agents.entries.*.tools.alsoAllow": "Agent Tool Allowlist Additions",
   "agents.entries.*.tools.codeMode": "Agent Code Mode",
   "agents.entries.*.tools.swarm": "Agent Swarm",
+  "agents.entries.*.tools.facets": "Agent Tool Schema Facets",
+  "agents.entries.*.tools.facets.automations": "Agent Automations Tool Facet",
   "tools.byProvider": "Tool Policy by Provider",
   "agents.entries.*.tools.byProvider": "Agent Tool Policy by Provider",
   "agents.entries.*.tools.message.crossContext.allowWithinProvider":
@@ -215,6 +217,8 @@ export const FIELD_LABELS: Record<string, string> = {
   "tools.codeMode.snapshotTtlSeconds": "Code Mode Snapshot TTL",
   "tools.codeMode.searchDefaultLimit": "Code Mode Default Search Results",
   "tools.codeMode.maxSearchLimit": "Code Mode Max Search Results",
+  "tools.facets": "Tool Schema Facets",
+  "tools.facets.automations": "Automations Tool Facet",
   "tools.swarm": "Swarm",
   "tools.swarm.enabled": "Enable Swarm",
   "tools.swarm.maxConcurrent": "Swarm Concurrent Children",

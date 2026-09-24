@@ -157,6 +157,10 @@ export const RUNTIME_FIELD_HELP: Record<string, string> = {
     "Default number of hidden catalog search results returned by `catalog.search` inside code mode.",
   "tools.codeMode.maxSearchLimit":
     "Maximum number of hidden catalog search results a code-mode program can request.",
+  "tools.facets":
+    "Opt-in narrowing of large multi-action tool schemas to cut resident prompt size. Omitted keys keep the full schema.",
+  "tools.facets.automations":
+    'Resident `automations` schema. "full" (default) exposes every action; "core" exposes only status, list, get, runs, and next_check and drops the job definition, cutting the tool description and schema by about 90%. Core agents cannot create, update, remove, run, or wake automations; automation-run sessions and management-authority turns keep their surface.',
   "tools.swarm":
     "Collector-mode subagent orchestration. Enabled by default; set false to opt out. Tool permissions still apply to agents_wait and swarm spawn options.",
   "tools.swarm.enabled":
@@ -460,6 +464,10 @@ export const RUNTIME_FIELD_HELP: Record<string, string> = {
     "Per-agent additive allowlist for tools on top of global and profile policy. Keep narrow to avoid accidental privilege expansion on specialized agents.",
   "agents.entries.*.tools.codeMode":
     "Per-agent Code Mode options. Explicit enabled overrides the shared model and global activation defaults; an agent-specific model codeMode override wins. Other options merge over tools.codeMode without changing activation.",
+  "agents.entries.*.tools.facets":
+    "Per-agent tool schema facets. Each key overrides the matching tools.facets value for this agent.",
+  "agents.entries.*.tools.facets.automations":
+    'Per-agent `automations` schema facet: "core" (read-only query actions) or "full". Overrides tools.facets.automations.',
   "agents.entries.*.tools.swarm":
     "Per-agent swarm override. Values merge over the top-level tools.swarm configuration.",
   "agents.entries.*.tools.byProvider":

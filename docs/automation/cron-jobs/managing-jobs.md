@@ -213,6 +213,26 @@ Set `cron.skipMissedJobs: true` to skip recurring (`cron` and `every`) slots mis
 
 Disable automations: `cron.enabled: false` or `OPENCLAW_SKIP_CRON=1`.
 
+### Smaller `automations` tool schema
+
+The `automations` tool carries a large schema because it can create and edit jobs. Agents that only need to inspect automations can use a read-only facet instead:
+
+```json5
+{
+  tools: {
+    facets: { automations: "core" }, // default "full"
+  },
+  agents: {
+    list: [
+      // Per-agent values override tools.facets.
+      { id: "scheduler", tools: { facets: { automations: "full" } } },
+    ],
+  },
+}
+```
+
+With `"core"`, the tool offers only `status`, `list`, `get`, `runs`, and `next_check`, and omits the job definition. That cuts the tool's description and schema by about 90%. Those agents cannot create, update, remove, run, or wake automations; they are told to use the Automations page or `openclaw cron` instead. Automation-run sessions keep their self-remove surface, and Control UI or channel-owner management turns keep their granted actions.
+
 <AccordionGroup>
   <Accordion title="Retry behavior">
     **One-shot retry**: transient errors (rate limit, overload, network, timeout, server error) use a built-in retry schedule. Permanent errors disable the job immediately.
