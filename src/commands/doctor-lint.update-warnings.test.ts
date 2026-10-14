@@ -23,7 +23,10 @@ it.each([
     // Released 9.4/9.5 updaters lack the writable-parent marker and use both phase markers.
     vi.stubEnv("OPENCLAW_UPDATE_IN_PROGRESS", releasedPostPlugin ? "1" : "0");
     vi.stubEnv("OPENCLAW_UPDATE_POST_CORE_CONVERGENCE", releasedPostPlugin ? "1" : "0");
-    vi.stubEnv("OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE", releasedPostPlugin ? "0" : "1");
+    vi.stubEnv(
+      "OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE",
+      releasedPostPlugin ? "0" : "1",
+    );
     const finding = {
       checkId,
       severity: "error" as const,
