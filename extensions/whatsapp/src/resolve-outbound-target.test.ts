@@ -54,6 +54,23 @@ describe("resolveWhatsAppOutboundTarget", () => {
     });
   });
 
+  it.each<[string, ResolveParams["allowFrom"], number]>([
+    ["one invalid entry", ["typo!!!"], 1],
+    ["several invalid entries", ["typo!!!", "not-a-number"], 2],
+    ["invalid entries beside blanks", ["  ", "typo!!!"], 1],
+  ])("fails closed when allowFrom has only %s", (_label, allowFrom, count) => {
+    expect(
+      resolveWhatsAppOutboundTarget({ to: PRIMARY_TARGET, allowFrom, mode: "implicit" }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: `WhatsApp allowFrom has ${count} configured ${
+          count === 1 ? "entry" : "entries"
+        }, but none are valid WhatsApp targets; refusing to send to "${PRIMARY_TARGET}".`,
+      }),
+    });
+  });
+
   it("trims the resolved target", () => {
     expect(
       resolveWhatsAppOutboundTarget({

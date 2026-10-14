@@ -26,6 +26,17 @@ export function resolveWhatsAppOutboundTarget(params: {
     .filter((entry) => entry !== "*")
     .map((entry) => normalizeWhatsAppTarget(entry))
     .filter((entry): entry is string => Boolean(entry));
+  if (!hasWildcard && allowListRaw.length > 0 && allowList.length === 0) {
+    // A configured list with no usable entry is a typo, not "no policy"; fail closed.
+    return {
+      ok: false,
+      error: new Error(
+        `WhatsApp allowFrom has ${allowListRaw.length} configured ${
+          allowListRaw.length === 1 ? "entry" : "entries"
+        }, but none are valid WhatsApp targets; refusing to send to "${normalizedTo}".`,
+      ),
+    };
+  }
   if (hasWildcard || allowList.length === 0 || allowList.includes(normalizedTo)) {
     return { ok: true, to: normalizedTo };
   }
