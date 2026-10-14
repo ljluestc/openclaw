@@ -1,4 +1,5 @@
 import { ensureSystemPromptCacheBoundary } from "@openclaw/ai/internal/shared";
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import {
@@ -104,6 +105,7 @@ import type { ResolvedProviderAuth } from "../model-auth-runtime-shared.js";
 import { loadManifestModelCatalog, overlayConfiguredModelCatalog } from "../model-catalog.js";
 import { resolveModelContextWindowProfile } from "../model-context-window.js";
 import { recordAdmittedModelRoutingDecision } from "../model-routing-decision.js";
+import { resolveModelRuntimePolicy } from "../model-runtime-policy.js";
 import { applyPluginTextReplacements } from "../plugin-text-transforms.js";
 import { resolveRuntimeChannelPromptContext } from "../runtime-capabilities.js";
 import { buildSystemPromptReport } from "../system-prompt-report.js";
@@ -641,6 +643,23 @@ async function prepareCliRunContextWithinReadFence(
     if (contextWindowProfile.contextWindow && contextWindowProfile.contextTokens !== undefined) {
       modelContextTokens = Math.min(modelContextTokens, contextWindowProfile.contextTokens);
     }
+  }
+  // Backends that own native compaction ignore OpenClaw compaction settings. The model entry that
+  // selects this backend may lower the budget handed to it without an API-provider model block.
+  const runtimeContextTokens = uniqueStrings([modelId, normalizedCatalogModel]).flatMap((model) => {
+    const policy = resolveModelRuntimePolicy({
+      config: params.config,
+      provider: backendResolved.modelProvider ?? modelProvider,
+      modelId: model,
+      agentScope: { kind: "prepared", agentId: policyAgentId },
+    }).policy;
+    return policy?.contextTokens !== undefined &&
+      normalizeProviderId(policy.id ?? "") === backendResolved.id
+      ? [policy.contextTokens]
+      : [];
+  });
+  if (runtimeContextTokens.length) {
+    modelContextTokens = Math.min(modelContextTokens, ...runtimeContextTokens);
   }
   const resolvedContextWindowInfo = resolveContextWindowInfo({
     cfg: params.config,

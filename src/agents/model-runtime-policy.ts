@@ -50,12 +50,16 @@ export function resolveAgentRuntimePolicyAgentId(
     : params.agentId;
 }
 
+/** Model entries may carry a CLI context budget alongside the runtime id. */
+type ModelRuntimePolicyConfig = AgentRuntimePolicyConfig &
+  Pick<NonNullable<AgentModelEntryConfig["agentRuntime"]>, "contextTokens">;
+
 /** Config surface that supplied a resolved model runtime policy. */
 type ModelRuntimePolicySource = "model" | "provider";
 
 /** Runtime policy plus the config surface that supplied it. */
 type ResolvedModelRuntimePolicy = {
-  policy?: AgentRuntimePolicyConfig;
+  policy?: ModelRuntimePolicyConfig;
   source?: ModelRuntimePolicySource;
   matchedProvider?: string;
   forcedByEnvironment?: true;
@@ -65,7 +69,7 @@ type ModelEntryMatchKind = "none" | "exact" | "provider-wildcard";
 
 type AgentModelRuntimePolicyMatch = {
   provider: string;
-  policy: AgentRuntimePolicyConfig;
+  policy: ModelRuntimePolicyConfig;
 };
 
 type AgentModelRuntimePolicyResolution = ResolvedModelRuntimePolicy & {

@@ -93,6 +93,8 @@ export const AGENT_FIELD_HELP: Record<string, string> = {
     "Optional per-model runtime policy for this agent. Use this for agent-specific model exceptions instead of setting a whole-agent runtime.",
   "agents.entries.*.models.*.agentRuntime.id":
     'Per-agent model runtime id: "openclaw", "auto", a registered plugin harness id such as "codex", or a supported CLI backend alias such as "claude-cli".',
+  "agents.entries.*.models.*.agentRuntime.contextTokens":
+    "Context budget in tokens for this agent's model when its runtime id names a CLI backend that owns native compaction, such as claude-cli. OpenClaw passes it to Claude Code as CLAUDE_CODE_AUTO_COMPACT_WINDOW. It can only lower the model's effective window and has no effect on other runtimes.",
   "agents.entries.*.models.*.codeMode":
     "OpenClaw Code Mode for this agent and exact provider/model: On forces it on, Off disables it, and Default inherits the agent activation setting, then the shared model override, then tools.codeMode.enabled. This does not change the selected runtime or Codex native Code Mode.",
   "agents.defaults.imageModel.primary":

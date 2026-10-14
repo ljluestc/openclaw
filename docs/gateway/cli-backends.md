@@ -548,6 +548,24 @@ Some CLI backends run an agent that compacts its own transcript. OpenClaw must n
 
 `claude-cli` has no harness endpoint (Claude Code compacts internally), so it declares `ownsNativeCompaction: true`. Automatic OpenClaw compaction defers to Claude Code, while an explicit `/compact` resumes the bound Claude Code session and sends its native `/compact` command. OpenClaw passes the run's effective context budget through Claude Code's documented [`CLAUDE_CODE_AUTO_COMPACT_WINDOW`](https://code.claude.com/docs/en/env-vars), keeping native auto-compaction aligned with configured Anthropic `contextTokens` limits. Native-harness sessions such as Codex keep routing to their harness compaction endpoint instead.
 
+OpenClaw's `agents.defaults.compaction.*` settings and pre-compaction memory flush do not apply to these sessions. To lower the budget Claude Code compacts against without adding an API-provider model block, set `contextTokens` on the model entry that selects the CLI runtime:
+
+```json5
+{
+  agents: {
+    defaults: {
+      models: {
+        "anthropic/claude-opus-5-5": {
+          agentRuntime: { id: "claude-cli", contextTokens: 300000 },
+        },
+      },
+    },
+  },
+}
+```
+
+The same field works under `agents.entries.<id>.models` for one agent's model entry. It applies only when that entry's `agentRuntime.id` names the CLI backend running the turn. It can only lower the effective budget: the smallest of this value, a configured `models.providers.*.models[].contextTokens`, and the session-selected or default context window wins.
+
 `google-gemini-cli` also owns automatic compaction and persists its compressed session for resume. OpenClaw defers to Gemini CLI rather than running a second summarizer. Explicit `/compact` is unsupported for this backend because it does not declare a manual compaction capability.
 
 ```typescript

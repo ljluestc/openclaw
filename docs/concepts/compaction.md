@@ -8,6 +8,10 @@ title: "Compaction"
 
 Every model has a context window: the maximum number of tokens it can process. When a conversation approaches that limit, OpenClaw **compacts** older messages into a summary so the chat can continue.
 
+<Note>
+CLI backends that compact their own sessions, such as `claude-cli`, are not compacted by OpenClaw. The `agents.defaults.compaction.*` settings and the pre-compaction memory flush do not apply to them. To give Claude Code a smaller compaction budget, see [Native compaction ownership](/gateway/cli-backends#native-compaction-ownership).
+</Note>
+
 ## How it works
 
 1. Older conversation turns are summarized into a compact entry.

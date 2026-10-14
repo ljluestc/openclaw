@@ -617,6 +617,69 @@ describe("prepareCliRunContext", () => {
     );
   });
 
+  it.each([
+    {
+      name: "lowers the default window to the model entry's CLI budget",
+      agentRuntime: { id: "claude-cli", contextTokens: 300_000 },
+      selection: undefined,
+      expected: 300_000,
+    },
+    {
+      name: "keeps a smaller session-selected window",
+      agentRuntime: { id: "claude-cli", contextTokens: 300_000 },
+      selection: "200k",
+      expected: 200_000,
+    },
+    {
+      name: "never raises the window above the native limit",
+      agentRuntime: { id: "claude-cli", contextTokens: 2_000_000 },
+      selection: undefined,
+      expected: 1_000_000,
+    },
+    {
+      name: "ignores a budget on an entry that selects another runtime",
+      agentRuntime: { id: "openclaw", contextTokens: 300_000 },
+      selection: undefined,
+      expected: 1_000_000,
+    },
+  ])("$name", async (testCase) => {
+    const prepareExecution = vi.fn(async () => undefined);
+    setCliBackendForPrepareTest({ prepareExecution });
+    setCliRunnerPrepareTestDeps({
+      loadManifestModelCatalog: vi.fn(() => [
+        {
+          id: "claude-fable-5",
+          name: "Claude Fable 5",
+          provider: "anthropic",
+          contextWindow: 1_000_000,
+          contextWindows: [
+            { id: "200k", label: "200K", contextWindow: 200_000 },
+            { id: "1m", label: "1M", contextWindow: 1_000_000 },
+          ],
+          contextWindowDefault: "1m",
+        },
+      ]),
+    });
+
+    const context = await fixture.prepare({
+      provider: "claude-cli",
+      model: "claude-fable-5",
+      config: {
+        agents: {
+          defaults: {
+            models: { "anthropic/claude-fable-5": { agentRuntime: testCase.agentRuntime } },
+          },
+        },
+      },
+      ...(testCase.selection ? { contextWindow: testCase.selection } : {}),
+    });
+
+    expect(context.contextWindowInfo?.tokens).toBe(testCase.expected);
+    expect(prepareExecution).toHaveBeenCalledWith(
+      expect.objectContaining({ contextTokenBudget: testCase.expected }),
+    );
+  });
+
   beforeEach(() => {
     // Install narrow test doubles for external runtime seams so preparation
     // remains about data flow, not bundled plugin or loopback startup cost.

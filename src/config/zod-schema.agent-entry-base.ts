@@ -9,13 +9,24 @@ export const AgentRuntimePolicySchema = z
   })
   .optional();
 
+const AgentModelRuntimePolicySchema = z
+  .strictObject({
+    id: z.string().optional(),
+    /**
+     * Effective context budget handed to a CLI backend that owns native compaction
+     * (for example Claude Code via CLAUDE_CODE_AUTO_COMPACT_WINDOW). Only lowers the budget.
+     */
+    contextTokens: z.number().int().positive().optional(),
+  })
+  .optional();
+
 const AgentModelRuntimeEntrySchema = z.strictObject({
   /** Optional display/lookup alias for this provider/model entry. */
   alias: z.string().optional(),
   /** Provider-specific API parameters (e.g., GLM-4.7 thinking mode). */
   params: z.record(z.string(), z.unknown()).optional(),
   /** Optional agent execution runtime for this specific provider/model entry. */
-  agentRuntime: AgentRuntimePolicySchema,
+  agentRuntime: AgentModelRuntimePolicySchema,
   /** Additional explicit runtime choices in the model picker; does not change the default. */
   pickerRuntimes: z
     .array(
