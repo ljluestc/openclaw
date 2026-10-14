@@ -1,22 +1,28 @@
-import type { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import {
+  clearRuntimeConfigSnapshot,
+  setRuntimeConfigSnapshot,
+} from "../config/runtime-snapshot.js";
 import { listSessionEntriesCore } from "../config/sessions/session-accessor.entry.js";
 import {
   loadSessionEntryReadOnly,
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.sqlite-entry.js";
+import type { EngineConnection } from "../infra/sql-connection.js";
+import { useSessionStoreTempDirs } from "../test-utils/session-state-cleanup.js";
+import { openOpenClawAgentDatabase } from "./openclaw-agent-db.js";
 import {
-  closeOpenClawAgentDatabasesForTest,
-  openOpenClawAgentDatabase,
-} from "./openclaw-agent-db.js";
-import {
-  closeOpenClawStateDatabaseForTest,
-  openOpenClawStateDatabase,
-} from "./openclaw-state-db.js";
+  openClawStateDatabaseCache,
+  recordOpenClawStateDatabaseOpenFailure,
+} from "./openclaw-state-db-cache.js";
+import { OPENCLAW_STATE_SCHEMA_VERSION } from "./openclaw-state-db-contract.js";
+import { withExistingOpenClawStateDatabaseReadOnly } from "./openclaw-state-db-readonly.js";
+import { openOpenClawStateDatabase } from "./openclaw-state-db.js";
 
 const trace = vi.hoisted(() => ({
-  execute: vi.fn<(database: DatabaseSync, sql: string) => void>(),
+  execute: vi.fn<(database: EngineConnection, sql: string) => void>(),
+  isVersionProbe: (sql: string) =>
+    /^PRAGMA data_version\b|FROM main\.pragma_data_version\(\)\s*$/iu.test(sql),
 }));
 vi.mock("../infra/kysely-sync-cache-state.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../infra/kysely-sync-cache-state.js")>();
@@ -24,7 +30,7 @@ vi.mock("../infra/kysely-sync-cache-state.js", async (importOriginal) => {
     ...actual,
     executeWithCachedStatement: (...args: Parameters<typeof actual.executeWithCachedStatement>) => {
       // Count executions, including hits in the prepared-statement cache.
-      if (!/^PRAGMA data_version\b/i.test(args[1])) {
+      if (!trace.isVersionProbe(args[1])) {
         trace.execute(args[0], args[1]);
       }
       return actual.executeWithCachedStatement(...args);
@@ -41,7 +47,7 @@ vi.mock("../infra/node-sqlite.js", async (importOriginal) => {
       vi.spyOn(database, "prepare").mockImplementation((sql) => {
         const statement = prepare(sql);
         // Observe before admission: the state owner retains raw statements outside Kysely.
-        if (/^PRAGMA data_version\b/i.test(sql)) {
+        if (trace.isVersionProbe(sql)) {
           const get = statement.get.bind(statement);
           vi.spyOn(statement, "get").mockImplementation((...bindings) => {
             trace.execute(database, sql);
@@ -55,7 +61,11 @@ vi.mock("../infra/node-sqlite.js", async (importOriginal) => {
   };
 });
 
-const tempDirs = useAutoCleanupTempDirTracker(afterAll);
+const sessionDirs = useSessionStoreTempDirs(afterAll, "openclaw-schema-budget-");
+afterAll(() => {
+  clearRuntimeConfigSnapshot();
+  vi.restoreAllMocks();
+});
 const counts: Array<{
   owner: string;
   userVersion: number;
@@ -63,16 +73,11 @@ const counts: Array<{
   dataVersion: number;
 }> = [];
 
-afterAll(() => {
-  closeOpenClawAgentDatabasesForTest();
-  closeOpenClawStateDatabaseForTest();
-  vi.restoreAllMocks();
-});
-
 beforeAll(async () => {
+  setRuntimeConfigSnapshot({});
   const scope = {
     agentId: "main",
-    env: { ...process.env, OPENCLAW_STATE_DIR: tempDirs.make("openclaw-schema-budget-") },
+    env: { ...process.env, OPENCLAW_STATE_DIR: sessionDirs.make() },
     sessionKey: "agent:main:schema-budget",
     projection: "list" as const,
   };
@@ -90,9 +95,7 @@ beforeAll(async () => {
   expect(trace.execute.mock.calls.some(([, sql]) => /^PRAGMA user_version\b/i.test(sql))).toBe(
     true,
   );
-  expect(trace.execute.mock.calls.some(([, sql]) => /^PRAGMA data_version\b/i.test(sql))).toBe(
-    true,
-  );
+  expect(trace.execute.mock.calls.some(([, sql]) => trace.isVersionProbe(sql))).toBe(false);
   trace.execute.mockClear();
 
   // No await: all 100 reads of each entry point occur in the same event-loop turn.
@@ -108,21 +111,57 @@ beforeAll(async () => {
       owner,
       userVersion: sql.filter((text) => /^PRAGMA user_version\b/i.test(text)).length,
       sqliteMaster: sql.filter((text) => /\bsqlite_(master|schema)\b/i.test(text)).length,
-      dataVersion: sql.filter((text) => /^PRAGMA data_version\b/i.test(text)).length,
+      dataVersion: sql.filter(trace.isVersionProbe).length,
     });
   }
+  trace.execute.mockClear();
+  for (let i = 0; i < 100; i++) {
+    expect(withExistingOpenClawStateDatabaseReadOnly(({ db }) => db, scope)).toBe(state.db);
+  }
+  const sql = trace.execute.mock.calls.filter(([db]) => db === state.db).map(([, text]) => text);
+  counts.push({
+    owner: "state-readonly",
+    userVersion: sql.filter((text) => /^PRAGMA user_version\b/i.test(text)).length,
+    sqliteMaster: sql.filter((text) => /\bsqlite_(master|schema)\b/i.test(text)).length,
+    dataVersion: sql.filter(trace.isVersionProbe).length,
+  });
   console.info("Admitted database checks for 100 reads per entry point:", counts);
 });
 
-// Remove .fails when the schema-assert-per-handle cutover lands (companion PR pending).
-// Setup and read-result checks stay outside this expected failure so only the budget is exempt.
-it.fails("keeps admitted reads within the schema-query budget (pending schema-assert-per-handle)", () => {
+it("keeps admitted reads free of schema checks and freshness probes", () => {
   expect(counts).toEqual(
-    ["agent", "state"].map((owner) => ({
+    ["agent", "state", "state-readonly"].map((owner) => ({
       owner,
       userVersion: 0,
       sqliteMaster: 0,
-      dataVersion: expect.toBeOneOf([0, 1]),
+      dataVersion: 0,
     })),
   );
 });
+
+it.each(["revocation", "schema-change"] as const)(
+  "invalidates cached admission after %s",
+  (cause) => {
+    const scope = { env: { OPENCLAW_STATE_DIR: sessionDirs.make() } };
+    const database = openOpenClawStateDatabase(scope);
+    const cached = () => openClawStateDatabaseCache.getCachedOpenClawStateDatabase(database.path);
+    expect(cached()).toBe(database);
+    if (cause === "schema-change") {
+      database.db.exec(`BEGIN; PRAGMA user_version = ${OPENCLAW_STATE_SCHEMA_VERSION - 1}`);
+      expect(cached()).toBe(database);
+      database.db.exec("ROLLBACK");
+      expect(cached()).toBe(database);
+      database.db.exec(`PRAGMA user_version = ${OPENCLAW_STATE_SCHEMA_VERSION + 1}`);
+      expect(cached).toThrow(/uses newer schema version/);
+      return;
+    }
+    const failure = new Error("synthetic revoked state admission");
+    recordOpenClawStateDatabaseOpenFailure(database.path, failure);
+    trace.execute.mockClear();
+    expect(cached).toThrow(failure);
+    expect(() => withExistingOpenClawStateDatabaseReadOnly(() => undefined, scope)).toThrow(
+      failure,
+    );
+    expect(trace.execute).not.toHaveBeenCalled();
+  },
+);

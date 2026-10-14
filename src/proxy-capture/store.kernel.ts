@@ -1,7 +1,7 @@
 // Connection-bound capture operations retain their caller's synchronous write admission.
 import fs from "node:fs";
 import path from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import { StringDecoder } from "node:string_decoder";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { normalizeUniqueStringEntries } from "@openclaw/normalization-core/string-normalization";
 import type { InferResult } from "kysely";
@@ -9,6 +9,7 @@ import { sha256Hex } from "../infra/crypto-digest.js";
 import { executeWithCachedStatement } from "../infra/kysely-sync-cache-state.js";
 import { compileSqliteQueryBindings, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import { applyPrivateModeSync } from "../infra/private-mode.js";
+import type { EngineConnection } from "../infra/sql-connection.js";
 import { runSqliteImmediateTransactionSync } from "../infra/sqlite-transaction.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
@@ -45,7 +46,7 @@ export const DEBUG_PROXY_CAPTURE_DIR_MODE = 0o700;
 export const DEBUG_PROXY_CAPTURE_FILE_MODE = 0o600;
 
 export type DebugProxyCaptureKernelOptions = {
-  db: DatabaseSync;
+  db: EngineConnection;
   dbPath: string;
   blobDir: string;
   pathBased?: { blobDir: string };
@@ -53,7 +54,7 @@ export type DebugProxyCaptureKernelOptions = {
 };
 
 export class DebugProxyCaptureKernel {
-  readonly db: DatabaseSync;
+  readonly db: EngineConnection;
   readonly dbPath: string;
   readonly blobDir: string;
   private readonly capturePathBased?: { blobDir: string };
@@ -526,4 +527,26 @@ export class DebugProxyCaptureKernel {
       rows.map((row) => row.blobId?.trim()).filter((blobId): blobId is string => Boolean(blobId)),
     );
   }
+}
+
+export function persistEventPayload(
+  store: {
+    persistPayload(data: Buffer, contentType?: string): CaptureBlobRecord | SharedCaptureBlobRecord;
+  },
+  params: { data?: Buffer | string | null; contentType?: string; previewLimit?: number },
+): { dataText?: string; dataBlobId?: string; dataSha256?: string } {
+  if (params.data == null) {
+    return {};
+  }
+  const buffer = Buffer.isBuffer(params.data) ? params.data : Buffer.from(params.data);
+  const previewLimit = params.previewLimit ?? 8192;
+  // Store the whole payload as a blob but keep a small UTF-8 preview inline for
+  // fast CLI listings and query output. write(), unlike end(), omits an incomplete
+  // trailing code point introduced by the byte cap instead of injecting U+FFFD.
+  const blob = store.persistPayload(buffer, params.contentType);
+  return {
+    dataText: new StringDecoder("utf8").write(buffer.subarray(0, previewLimit)),
+    dataBlobId: blob.blobId,
+    dataSha256: blob.sha256,
+  };
 }
