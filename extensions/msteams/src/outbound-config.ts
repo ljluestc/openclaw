@@ -19,6 +19,8 @@ export const msteamsOutboundConfig = {
   resolveEffectiveTextChunkLimit: ({ fallbackLimit }) =>
     resolveMSTeamsEffectiveTextChunkLimit(fallbackLimit),
   pollMaxOptions: 12,
+  // Cron announcements deliver the final answer, not pre-tool narration.
+  preferFinalAssistantVisibleText: true,
   deliveryCapabilities: {
     durableFinal: {
       text: true,
