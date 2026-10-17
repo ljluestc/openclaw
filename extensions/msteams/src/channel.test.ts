@@ -304,6 +304,13 @@ describe("Teams delivery reconciliation", () => {
   });
 });
 
+describe("Teams cron announce output policy", () => {
+  it("projects text-only cron announcements to the final assistant-visible text", () => {
+    // Shared cron resolution keeps every selected text payload unless the channel opts in.
+    expect(msteamsPlugin.outbound?.preferFinalAssistantVisibleText).toBe(true);
+  });
+});
+
 const msteamsDirectoryAdapter = msteamsPlugin.directory;
 
 describe("msteams directory", () => {
