@@ -105,9 +105,9 @@ Required SharePoint uploads, member lookups, sharing links, and redirects check
 the same authority before continuing. An uploaded SharePoint file is preparation
 for the Teams file card; the upload alone does not confirm delivery to the chat.
 
-Text-only cron and heartbeat announcements collapse to the final
-assistant-visible answer, sent once, so pre-tool narration such as "Let me
-check..." is not posted beside the result. Media, Adaptive Card, and other
+Text-only isolated cron announcements collapse to the final assistant-visible
+answer, sent once, so pre-tool narration such as "Let me check..." is not
+posted beside the result. Media, Adaptive Card, and other
 structured payloads are still delivered separately, and fatal errors are still
 reported.
 
