@@ -526,7 +526,7 @@ With `announce`, agent, command, and script results belong to the chat or topic 
     complete answer is no longer available, delivery keeps the existing preview,
     including its trailing `…`.
 
-    For text-only Discord announce targets, OpenClaw sends the final assistant text once instead of replaying both streamed/intermediate text and the final answer. Media and structured Discord payloads are still delivered separately so attachments and components are not dropped.
+    For text-only Discord, Telegram, Slack, and Microsoft Teams announce targets, OpenClaw sends the final assistant text once instead of replaying both streamed/intermediate text and the final answer. Media and structured payloads are still delivered separately so attachments and components are not dropped.
 
   </Accordion>
 </AccordionGroup>
