@@ -55,12 +55,15 @@ it.each([
 
 it("injects the built-in plugin-tools MCP server only when explicitly enabled", () => {
   const distEntry = path.resolve("dist/mcp/plugin-tools-serve.js");
-  expect(resolve({ pluginToolsMcpBridge: true }).mcpServers["openclaw-plugin-tools"]).toEqual({
-    command: process.execPath,
-    args: fs.existsSync(distEntry)
-      ? [distEntry]
-      : ["--import", TSX_IMPORT, path.resolve("src/mcp/plugin-tools-serve.ts")],
-  });
+  expect(resolve({ pluginToolsMcpBridge: true }).mcpServers["openclaw-plugin-tools"]).toEqual(
+    fs.existsSync(distEntry)
+      ? { command: process.execPath, args: [distEntry] }
+      : {
+          command: process.execPath,
+          args: ["--import", TSX_IMPORT, path.resolve("src/mcp/plugin-tools-serve.ts")],
+          env: { TSX_TSCONFIG_PATH: path.resolve("tsconfig.json"), TSX_DISABLE_CACHE: "" },
+        },
+  );
 });
 
 it("launches managed bridges from the host package when acpx is an external package", () => {

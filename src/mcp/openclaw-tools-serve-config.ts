@@ -90,7 +90,11 @@ function resolveTsxImportSpecifier(): string {
   }
 }
 
-function resolveOpenClawToolsServeCommand(): { command: string; args: string[] } {
+function resolveOpenClawToolsServeCommand(): {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+} {
   const packageRoot = resolveOpenClawPackageRootSync({
     argv1: process.argv[1],
     moduleUrl: import.meta.url,
@@ -114,6 +118,15 @@ function resolveOpenClawToolsServeCommand(): { command: string; args: string[] }
   return {
     command: process.execPath,
     args: ["--import", resolveTsxImportSpecifier(), sourceEntry],
+    env: {
+      // CLI harnesses start this server in the session workspace, where tsx
+      // finds no tsconfig and cannot map workspace package aliases.
+      TSX_TSCONFIG_PATH: path.join(packageRoot, "tsconfig.json"),
+      // Repo tooling exports TSX_DISABLE_CACHE=1 to descendants. Uncached, every
+      // launch recompiles ~3k modules (~9s), near harness required-MCP startup
+      // windows; tsx treats empty as unset, so warm launches take ~3.5s.
+      TSX_DISABLE_CACHE: "",
+    },
   };
 }
 
@@ -136,6 +149,7 @@ export function buildSystemAgentToolsMcpServerConfig(
           ? [...entry.args, "--openclaw-agent-id", options.agentId]
           : entry.args,
         env: {
+          ...entry.env,
           [OPENCLAW_TOOLS_MCP_TOOLS_ENV]: "openclaw" satisfies OpenClawToolsMcpToolId,
           [OPENCLAW_TOOLS_MCP_SYSTEM_AGENT_SURFACE_ENV]: options.surface,
           // Per-turn approval state travels with the per-run MCP config; the

@@ -172,6 +172,15 @@ function resolveManagedToolsMcpServerConfig(
   return {
     command: process.execPath,
     args: ["--import", resolveTsxImportSpecifier(), sourceEntry],
+    env: {
+      // The harness starts this server in the session workspace, where tsx finds
+      // no tsconfig and cannot map workspace package aliases.
+      TSX_TSCONFIG_PATH: path.join(openClawRoot, "tsconfig.json"),
+      // Repo tooling exports TSX_DISABLE_CACHE=1 to descendants. Uncached, every
+      // launch recompiles ~3k modules (~9s), near harness required-MCP startup
+      // windows; tsx treats empty as unset, so warm launches take ~3.5s.
+      TSX_DISABLE_CACHE: "",
+    },
   };
 }
 
