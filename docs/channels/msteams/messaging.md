@@ -34,6 +34,22 @@ target authorization, or participant lookup stops its next request. Cancellation
 does not undo a mutation Microsoft has already accepted. Existing account, target,
 and owner/admin rules still apply; pinning and unpinning remain limited to chats.
 
+## Acknowledgment reactions
+
+Teams reacts to accepted messages with the shared
+[`messages.ackReaction`](/gateway/config-agents/messages-and-talk#ack-reaction)
+and `messages.ackReactionScope` settings when the account has
+`delegatedAuth.enabled: true`. Graph accepts reaction writes only with delegated
+permissions, so the reaction appears from the delegated user, not the bot.
+Without delegated auth, Teams sends no acknowledgment.
+
+Group chats and channel threads are supported. Channel acknowledgments need the
+team's Graph group ID, which Teams resolves while it prepares thread context.
+Personal chats that only carry a Bot Framework conversation ID (`a:...`) are
+skipped because Graph cannot address them. A failed reaction is logged at
+verbose level and never blocks the reply. The acknowledgment stays on the
+message after the reply.
+
 ## Reply style: threads vs posts
 
 Teams has two channel UI styles over the same underlying data model:

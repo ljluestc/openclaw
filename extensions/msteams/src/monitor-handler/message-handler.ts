@@ -32,6 +32,7 @@ import {
   wasMSTeamsMessageSentWithPersistence,
 } from "../sent-message-cache.js";
 import { admitMSTeamsMessage, resolveMSTeamsSenderAccess } from "./access.js";
+import { maybeSendMSTeamsAckReaction } from "./ack-reaction.js";
 import { createMSTeamsHandlerConfigReader } from "./config.js";
 import { prepareMSTeamsInboundContent } from "./inbound-content.js";
 import {
@@ -403,6 +404,19 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
       log.info("dropping message (dispatch-time account authorization changed)");
       return;
     }
+    maybeSendMSTeamsAckReaction({
+      cfg: dispatchAccountPolicyCfg,
+      accountId: route.accountId,
+      agentId: route.agentId,
+      isDirectMessage,
+      isChannel,
+      conversationId,
+      nativeChannelId,
+      messageId: activity.id,
+      threadRootId: facts.threadId,
+      wasMentioned: mentionDecision.effectiveWasMentioned,
+      logVerbose: logVerboseMessage,
+    });
     const ctxPayload = dispatchCore.channel.inbound.buildContext({
       channelIngress: boundIngress.channelIngress,
       channel: "msteams",
