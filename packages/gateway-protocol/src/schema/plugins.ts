@@ -229,10 +229,24 @@ export const PluginCatalogInstallActionSchema = Type.Union([
   PluginCatalogOfficialInstallSchema,
 ]);
 
+/** A typed hook the current runtime refused under host hook policy. */
+export const PluginBlockedHookSchema = closedObject({
+  hookName: NonEmptyString,
+  reason: stringLiteralUnion([
+    "conversation-access-missing",
+    "conversation-access-denied",
+    "prompt-injection-denied",
+  ]),
+  /** Config key the operator changes to alter this outcome. */
+  configPath: NonEmptyString,
+});
+
 /** Observed state of the plugin in the current Gateway runtime generation. */
 export const PluginRuntimeStatusSchema = closedObject({
   state: stringLiteralUnion(["unloaded", "disabled", "active", "service-failed"]),
   error: Type.Optional(Type.String()),
+  /** Present only when the loaded runtime refused at least one typed hook. */
+  blockedHooks: Type.Optional(Type.Array(PluginBlockedHookSchema, { maxItems: 64 })),
 });
 
 /** Catalog metadata and desired enablement, with optional observed runtime state. */

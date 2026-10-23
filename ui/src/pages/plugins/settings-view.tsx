@@ -26,6 +26,7 @@ import { PluginInstallAction, type PluginInstallActionProps } from "./install-ac
 import type { PluginInstallProgress } from "./install-progress.ts";
 import {
   renderPluginCapabilitySection,
+  PluginBlockedHooks,
   renderPluginCompatibilityNotices,
   renderPluginContentCapabilities,
   renderPluginMetadata,
@@ -73,6 +74,8 @@ type SharedProps = Omit<
   onUninstall: (pluginId: string, rowKey: string) => void;
   onConfigReload: () => void;
   onRefresh: () => void;
+  reviewPermissionsHref: (pluginId: string, setting: string) => string;
+  onReviewPermissions: (pluginId: string, setting: string) => void;
 };
 type InventoryProps = SharedProps & {
   tab: PluginSettingsTab;
@@ -97,6 +100,8 @@ export type DetailProps = SharedProps &
     tools?: PluginToolPreview[];
     onOpenTool?: (name: string) => void;
     settingsHref?: string;
+    /** Editor `data-setting` key a permission review should bring into view. */
+    focusSetting?: string;
     inspection: PluginsInspectResult | null;
     inspectionRead: PluginDetailRead;
     catalog?: PluginDiscoveryDetailResult;
@@ -220,6 +225,7 @@ function InstalledInventory(props: InventoryProps): JSX.Element {
                       </span>
                     </a>
                     {renderPluginCompatibilityNotices(plugin().compatibilityNotices)}
+                    <PluginBlockedHooks plugin={plugin()} compact actions={props} />
                   </div>
                   <div class="settings-row__control oc-settings-row-control">
                     {(() => {
@@ -449,6 +455,7 @@ function PluginNotices(props: DetailProps) {
       ) : null}
       {renderPluginRowMessage(props.messages[pluginRowKey(props.pluginId)])}
       {renderPluginCompatibilityNotices(plugin()?.compatibilityNotices, true)}
+      <PluginBlockedHooks plugin={plugin()} actions={props} />
     </>
   );
 }
@@ -492,6 +499,7 @@ export function renderPluginSettingsDetail(props: DetailProps): JSX.Element {
             resolveCredential={props.resolveCredential}
             onAskSetting={props.onAskSetting}
             permissions={permissionSettings(props)}
+            focusSetting={props.focusSetting}
           />
         </SettingsPage>
       ) : (

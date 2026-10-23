@@ -126,3 +126,60 @@ it.each([
     });
   },
 );
+
+it("reports hooks the loaded runtime refused, with the config key that changes them", async () => {
+  await withOpenClawTestState({ scenario: "minimal" }, async () => {
+    const entry = (id: string) => ({
+      id,
+      name: id,
+      installed: true,
+      enabled: true,
+      state: "enabled" as const,
+    });
+    catalogRead.mockReset();
+    catalogRead.mockResolvedValueOnce({
+      plugins: [entry("lossless"), entry("stale")],
+      diagnostics: [],
+      mutationAllowed: true,
+    });
+    const previous = captureActivePluginRegistrySnapshot();
+    await using cleanup = new AsyncDisposableStack();
+    cleanup.defer(() => restoreActivePluginRegistrySnapshot(previous));
+    const blockedHooks = [
+      {
+        hookName: "before_prompt_build" as const,
+        reason: "conversation-access-missing" as const,
+        configPath: "plugins.entries.lossless.hooks.allowConversationAccess",
+      },
+    ];
+    const registry = createEmptyPluginRegistry();
+    registry.plugins.push(
+      createPluginRecord({ id: "lossless", blockedHooks }),
+      // A record that stopped loading no longer describes live hook behavior.
+      createPluginRecord({ id: "stale", status: "disabled", blockedHooks }),
+    );
+    setActivePluginRegistry(registry);
+    const owner = createPluginRegistryOwner(registry);
+    cleanup.defer(async () => {
+      await owner.close();
+    });
+    const options = pluginRequest("plugins.list", {}, {
+      getRuntimeConfig: () => ({}),
+    } as GatewayRequestContext);
+    const handler = expectDefined(pluginsHandlers["plugins.list"], "plugins.list handler");
+    await withPluginRuntimeGatewayRequestScope(
+      { pluginRegistry: owner.registry, isWebchatConnect: () => false },
+      async () => handler(options),
+    );
+    expect(options.respond).toHaveBeenCalledExactlyOnceWith(
+      true,
+      expect.objectContaining({
+        plugins: [
+          expect.objectContaining({ id: "lossless", runtime: { state: "active", blockedHooks } }),
+          expect.objectContaining({ id: "stale", runtime: { state: "disabled" } }),
+        ],
+      }),
+      undefined,
+    );
+  });
+});

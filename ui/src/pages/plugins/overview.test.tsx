@@ -5,11 +5,12 @@ import { captureI18nStateForTesting } from "../../i18n/lib/translate.test-suppor
 import { i18n } from "../../i18n/lib/translate.ts";
 import { mountSolid, cleanupSolid } from "../../test-helpers/mount-solid.ts";
 import {
+  PluginBlockedHooks,
   renderPluginCompatibilityNotices,
   renderPluginMetadata,
   renderPluginPublisher,
 } from "./overview.tsx";
-import { createDiscoveryDetail } from "./plugins-page.test-support.ts";
+import { createDiscoveryDetail, createPlugin } from "./plugins-page.test-support.ts";
 import { renderPluginSecurityAudit } from "./security-audit.tsx";
 
 const views = new WeakMap<Element, { unmount: () => void }>();
@@ -33,6 +34,46 @@ const notice = {
 function renderNotice(overrides: Partial<typeof notice> = {}) {
   return render(() => renderPluginCompatibilityNotices([{ ...notice, ...overrides }]));
 }
+
+it("groups blocked hooks by the permission that blocks them", () => {
+  const plugin = createPlugin({
+    id: "my.plugin",
+    runtime: {
+      state: "active",
+      blockedHooks: [
+        {
+          hookName: "before_prompt_build",
+          reason: "prompt-injection-denied",
+          configPath: "plugins.entries.my.plugin.hooks.allowPromptInjection",
+        },
+        {
+          hookName: "llm_input",
+          reason: "conversation-access-denied",
+          configPath: "plugins.entries.my.plugin.hooks.allowConversationAccess",
+        },
+      ],
+    },
+  });
+  const actions = {
+    reviewPermissionsHref: (pluginId: string, setting: string) => `#${pluginId}/${setting}`,
+    onReviewPermissions: vi.fn(),
+  };
+  const detail = render(() => <PluginBlockedHooks plugin={plugin} actions={actions} />);
+  expect([...detail.querySelectorAll("[role=status]")].map((node) => node.textContent)).toEqual([
+    "Adding context to prompts is turned off, so these hooks are not running: before_prompt_build. Review permissions",
+    "Conversation access is turned off, so these hooks are not running: llm_input. Review permissions",
+  ]);
+  expect([...detail.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
+    "#my.plugin/hooks.allowPromptInjection",
+    "#my.plugin/hooks.allowConversationAccess",
+  ]);
+  const compact = render(() => <PluginBlockedHooks plugin={plugin} compact actions={actions} />);
+  expect(compact.textContent).toBe(
+    "Access blocked: some plugin hooks are not running. Review permissions",
+  );
+  const none = render(() => <PluginBlockedHooks plugin={createPlugin()} actions={actions} />);
+  expect(none.children).toHaveLength(0);
+});
 
 it("omits compatibility notices for plugins without observed deprecated API usage", () => {
   const container = render(() => renderPluginCompatibilityNotices(undefined));

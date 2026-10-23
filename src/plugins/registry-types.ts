@@ -225,6 +225,18 @@ export type PluginServiceRegistration = PluginRegistrationOwner & {
   trustedOfficialInstall?: boolean;
 };
 
+/**
+ * A typed hook the registry refused under host hook policy. `api.on()` returns
+ * void, so the live record is the only place the refusal stays observable; a
+ * reload builds a fresh record, which clears blockers the new config lifted.
+ */
+export type PluginBlockedHook = {
+  hookName: import("./types.js").PluginHookName;
+  reason: "conversation-access-missing" | "conversation-access-denied" | "prompt-injection-denied";
+  /** Config key the operator changes to alter this outcome. */
+  configPath: string;
+};
+
 export type PluginGatewayDiscoveryServiceRegistration = PluginRegistrationOwner & {
   readonly id: string;
   service: OpenClawGatewayDiscoveryService;
@@ -320,6 +332,7 @@ export type PluginRecord = {
   failurePhase?: "validation" | "load" | "register";
   toolNames: string[];
   hookNames: string[];
+  blockedHooks?: PluginBlockedHook[];
   channelIds: string[];
   cliBackendIds: string[];
   providerIds: string[];

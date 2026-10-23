@@ -16,3 +16,12 @@ it("keeps catalog identity and breadcrumb query when entering and leaving Settin
     hash: "",
   });
 });
+
+it("drops a permission review target when switching detail tabs", () => {
+  const location = {
+    pathname: "/settings/plugins/demo",
+    search: "?from=plugins&view=settings&setting=hooks.allowConversationAccess",
+  };
+  expect(pluginDetailLocation(location, true).search).toBe("?from=plugins&view=settings");
+  expect(pluginDetailLocation(location, false).search).toBe("?from=plugins");
+});

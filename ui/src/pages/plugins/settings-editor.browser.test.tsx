@@ -137,6 +137,8 @@ describe("grouped plugin settings", () => {
           onConfigWriteRetry={vi.fn()}
           onConfigReload={vi.fn()}
           onRefresh={vi.fn()}
+          reviewPermissionsHref={() => "#"}
+          onReviewPermissions={vi.fn()}
           onTabChange={vi.fn()}
           onQueryChange={vi.fn()}
           onIconError={vi.fn()}

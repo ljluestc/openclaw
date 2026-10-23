@@ -66,6 +66,9 @@ openclaw-plugin-settings-groups {
 .plugin-editor__row:focus-within {
   background: var(--bg-hover);
 }
+.plugin-editor__row[data-focus-target] {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
 .plugin-editor__copy {
   grid-column: 1;
   grid-row: 1;

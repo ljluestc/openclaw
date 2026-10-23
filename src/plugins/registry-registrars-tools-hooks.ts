@@ -29,6 +29,7 @@ import {
 } from "./registry-state.js";
 import type {
   PluginAgentToolResultMiddlewareRegistration,
+  PluginBlockedHook,
   PluginRecord,
 } from "./registry-types.js";
 import { normalizePluginToolContractNames, normalizePluginToolNames } from "./tool-contracts.js";
@@ -359,26 +360,33 @@ export function createToolHookRegistrars(state: PluginRegistryState) {
       reportRegistrationWarning(record, `unknown typed hook "${String(hookName)}" ignored`);
       return;
     }
+    const hooksConfigPath = `plugins.entries.${record.id}.hooks`;
+    const blockHook = (reason: PluginBlockedHook["reason"], configKey: string, message: string) => {
+      const blocked = (record.blockedHooks ??= []);
+      if (!blocked.some((entry) => entry.hookName === hookName)) {
+        blocked.push({ hookName, reason, configPath: `${hooksConfigPath}.${configKey}` });
+      }
+      reportRegistrationWarning(record, message);
+    };
     if (!resolvePromptInjectionAllowed(policy) && isPromptInjectionHookName(hookName)) {
-      reportRegistrationWarning(
-        record,
-        `typed hook "${hookName}" blocked by plugins.entries.${record.id}.hooks.allowPromptInjection=false`,
+      blockHook(
+        "prompt-injection-denied",
+        "allowPromptInjection",
+        `typed hook "${hookName}" blocked by ${hooksConfigPath}.allowPromptInjection=false`,
       );
       return;
     }
     const conversationAccessAllowed = resolveConversationAccessAllowed(record.origin, policy);
     if (PLUGIN_HOOK_METADATA[hookName].conversationAccess && !conversationAccessAllowed) {
-      if (record.origin !== "bundled") {
-        reportRegistrationWarning(
-          record,
-          `typed hook "${hookName}" blocked because non-bundled plugins must set ` +
-            `plugins.entries.${record.id}.hooks.allowConversationAccess=true`,
-        );
-        return;
-      }
-      reportRegistrationWarning(
-        record,
-        `typed hook "${hookName}" blocked by plugins.entries.${record.id}.hooks.allowConversationAccess=false`,
+      // Non-bundled plugins are denied by default; bundled ones only by explicit config.
+      const explicit = policy?.allowConversationAccess === false;
+      blockHook(
+        explicit ? "conversation-access-denied" : "conversation-access-missing",
+        "allowConversationAccess",
+        record.origin !== "bundled"
+          ? `typed hook "${hookName}" blocked because non-bundled plugins must set ` +
+              `${hooksConfigPath}.allowConversationAccess=true`
+          : `typed hook "${hookName}" blocked by ${hooksConfigPath}.allowConversationAccess=false`,
       );
       return;
     }

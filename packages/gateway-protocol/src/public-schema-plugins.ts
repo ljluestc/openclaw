@@ -1,6 +1,7 @@
 // Keep the plugin protocol family's explicit public export set in one place.
 export {
   CapabilityConsentErrorDetailsSchema,
+  PluginBlockedHookSchema,
   PluginCatalogEntrySchema,
   PluginCatalogInstallActionSchema,
   PluginDecisionProviderStatusSchema,

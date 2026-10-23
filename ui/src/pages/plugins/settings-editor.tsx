@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onSettled } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onSettled } from "solid-js";
 import { resolveStructuredDraftInitialValue } from "../../components/config-form-structured-draft.ts";
 import { ConfigStructuredDraft } from "../../components/config-form-structured-draft.tsx";
 import { ConfigMapField } from "../../components/config-form.node.collection-map.tsx";
@@ -87,6 +87,8 @@ export function flattenPluginSettingsFields(
 export type PluginSettingsEditorProps = {
   model?: PluginSettingsEditorModel;
   permissions?: { fields: PluginSettingsField[]; loading?: boolean };
+  /** `data-setting` key to scroll to, focus, and mark once its row renders. */
+  focusSetting?: string;
   onAskSetting?: (field: PluginSettingsField) => void;
   resolveCredential?: (field: PluginSettingsField) => PluginCredentialEditorProps | undefined;
 };
@@ -416,8 +418,37 @@ export function PluginSettingsEditor(props: PluginSettingsEditorProps) {
     const fields = permissionFields();
     return loading || fields.length ? { fields, loading } : undefined;
   });
+  let host: HTMLElement | undefined;
+  let focusedSetting: string | undefined;
+  // Permission rows appear only after inspection; land on the target once it renders.
+  createEffect(
+    () => {
+      const setting = props.focusSetting;
+      // The editor survives plugin-to-plugin navigation; scope the target to its plugin.
+      return setting && permissions()?.fields.length ? `${pluginId()}\0${setting}` : undefined;
+    },
+    (target) => {
+      if (!target || target === focusedSetting) {
+        return;
+      }
+      const setting = target.slice(target.indexOf("\0") + 1);
+      const row = [...(host?.querySelectorAll<HTMLElement>(".plugin-editor__row") ?? [])].find(
+        (element) => element.dataset.setting === setting,
+      );
+      if (!row) {
+        return;
+      }
+      focusedSetting = target;
+      row.dataset.focusTarget = "";
+      row.scrollIntoView({ block: "center", behavior: resolveScrollBehavior() });
+      // The setting menu precedes the control; focus the value the review is about.
+      (
+        row.querySelector<HTMLElement>("input,select,textarea") ?? row.querySelector("button")
+      )?.focus({ preventScroll: true });
+    },
+  );
   return (
-    <openclaw-plugin-settings-editor>
+    <openclaw-plugin-settings-editor ref={(element: HTMLElement) => (host = element)}>
       {props.model ? (
         <section class="plugin-editor">
           <header class="plugin-editor__header">

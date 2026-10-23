@@ -1,5 +1,5 @@
 import type { JSX } from "@solidjs/web";
-import { For } from "solid-js";
+import { For, Show, createMemo } from "solid-js";
 import {
   PLUGIN_UI_CAPABILITIES,
   type PluginUiCapability,
@@ -8,6 +8,7 @@ import { Icon } from "../../components/solid/icon.tsx";
 import { askBrandLabel } from "../../components/theme-brand-label.ts";
 import { registerPluginManagementEnglish } from "../../i18n/locales/en-plugin-management.ts";
 import { formatDateMs } from "../../lib/format.ts";
+import { handleNavigationClick } from "../../lib/navigation-click.ts";
 import type {
   PluginCatalogItem,
   PluginDiscoveryDetailResult,
@@ -68,6 +69,95 @@ export function renderPluginCompatibilityNotices(
         })
       }
     </For>
+  );
+}
+
+type PluginBlockedHooks = NonNullable<NonNullable<PluginCatalogItem["runtime"]>["blockedHooks"]>;
+
+const BLOCKED_HOOK_MESSAGES = {
+  "conversation-access-missing": "pluginsPage.blockedHooksConversationMissing",
+  "conversation-access-denied": "pluginsPage.blockedHooksConversationDenied",
+  "prompt-injection-denied": "pluginsPage.blockedHooksPromptDenied",
+} as const;
+
+/** Editor `data-setting` key (`hooks.<grant>`) for a blocked hook's config path. */
+export function blockedHookSetting(configPath: string): string {
+  return configPath.split(".").slice(-2).join(".");
+}
+
+/**
+ * Runtime-refused hooks from the live plugin record. The Gateway rebuilds the
+ * record on reload, so a notice disappears only once the applied runtime
+ * registers the hook, never on save alone.
+ */
+export function PluginBlockedHooks(props: {
+  plugin: PluginCatalogItem | undefined;
+  compact?: boolean;
+  actions: {
+    reviewPermissionsHref: (pluginId: string, setting: string) => string;
+    onReviewPermissions: (pluginId: string, setting: string) => void;
+  };
+}): JSX.Element {
+  const groups = createMemo(() => {
+    const byReason = new Map<PluginBlockedHooks[number]["reason"], PluginBlockedHooks>();
+    for (const hook of props.plugin?.runtime?.blockedHooks ?? []) {
+      byReason.set(hook.reason, [...(byReason.get(hook.reason) ?? []), hook]);
+    }
+    return [...byReason].map(([reason, hooks]) => ({
+      reason,
+      hooks,
+      setting: blockedHookSetting(hooks[0]!.configPath),
+    }));
+  });
+  const review = (setting: () => string) => (
+    <>
+      {" "}
+      <a
+        class="plugins-row-message__action"
+        href={props.actions.reviewPermissionsHref(props.plugin!.id, setting())}
+        onClick={(event: MouseEvent) =>
+          handleNavigationClick(event, () =>
+            props.actions.onReviewPermissions(props.plugin!.id, setting()),
+          )
+        }
+      >
+        {t("pluginsPage.reviewPermissions")}
+      </a>
+    </>
+  );
+  return (
+    <>
+      {props.compact ? (
+        <Show when={groups()[0]?.setting}>
+          {(setting) =>
+            renderPluginRowMessage({
+              kind: "warning",
+              get text() {
+                return t("pluginsPage.blockedHooksSummary");
+              },
+              details: review(setting),
+            })
+          }
+        </Show>
+      ) : (
+        // Keyed by reason so catalog refreshes keep a focused review link mounted.
+        <For each={groups()} keyed={(group) => group.reason}>
+          {(group) =>
+            renderPluginRowMessage({
+              kind: "warning",
+              get text() {
+                return t(BLOCKED_HOOK_MESSAGES[group().reason], {
+                  hooks: group()
+                    .hooks.map((hook) => hook.hookName)
+                    .join(", "),
+                });
+              },
+              details: review(() => group().setting),
+            })
+          }
+        </For>
+      )}
+    </>
   );
 }
 

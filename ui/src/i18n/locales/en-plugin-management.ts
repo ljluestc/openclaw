@@ -329,6 +329,14 @@ const enPluginManagement = {
     modelOverrideAccessDescription: "Allows plugin actions or subagents to choose another model.",
     accessAllowed: "Allowed",
     accessBlocked: "Blocked",
+    blockedHooksSummary: "Access blocked: some plugin hooks are not running.",
+    blockedHooksConversationMissing:
+      "These hooks need permission to read conversation context, so they are not running: {hooks}.",
+    blockedHooksConversationDenied:
+      "Conversation access is turned off, so these hooks are not running: {hooks}.",
+    blockedHooksPromptDenied:
+      "Adding context to prompts is turned off, so these hooks are not running: {hooks}.",
+    reviewPermissions: "Review permissions",
     lifecycle: "Lifecycle",
     lifecycleDescription: "Installed source, version, trust, and removal controls.",
     version: "Version",

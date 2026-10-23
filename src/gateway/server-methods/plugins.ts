@@ -141,6 +141,9 @@ export const pluginsHandlers: GatewayRequestHandlers = {
                       ? "disabled"
                       : "unloaded",
                 ...(error ? { error: error.slice(0, 2000) } : {}),
+                ...(record?.status === "loaded" && record.blockedHooks?.length
+                  ? { blockedHooks: record.blockedHooks.slice(0, 64) }
+                  : {}),
               },
             });
           }),

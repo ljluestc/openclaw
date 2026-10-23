@@ -288,7 +288,14 @@ An explicit hook policy is also startup intent. For example,
 non-bundled conversation hooks and selects that configured plugin for Gateway
 startup; normal plugin policy still applies. Run `openclaw plugins reload <id>`
 after changing the plugin manifest or source. With the default hybrid reload
-mode, hook policy changes hot-reload the plugin runtime. Inspect registration with
+mode, hook policy changes hot-reload the plugin runtime.
+
+When the running Gateway refuses a hook under this policy, the Control UI shows
+an **Access blocked** notice on the plugin's row in **Settings → Plugins** and on
+its detail page. **Review permissions** opens the plugin settings with the
+blocking permission highlighted. The notice clears after the reloaded runtime
+registers the hook, not when the setting is saved. A cleared notice confirms
+registration, not that the hook has run. Inspect registration with
 `openclaw plugins inspect <id> --runtime --json`, then trigger an event to verify
 the running process. See [Plugin hooks](/plugins/hooks#quick-start) for a complete
 example.

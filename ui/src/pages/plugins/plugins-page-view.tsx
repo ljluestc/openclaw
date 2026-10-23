@@ -53,6 +53,15 @@ export function PluginsPageView(props: { page: PluginsPageModel }) {
     error: page().discovery.read().error ?? page().state.error,
   }));
   const onOpenSkill = (request: PluginsSkillsReadParams) => void page().skillPreview.open(request);
+  const reviewPermissionsLocation = (pluginId: string, setting: string) => {
+    const location = pluginDetailLocation(page().routeData?.location, true);
+    const search = new URLSearchParams(location.search);
+    search.set("setting", setting);
+    return {
+      pathname: pathForPluginSettings(pluginId, page().context.basePath),
+      search: `?${search}`,
+    };
+  };
   const actions = {
     openPluginSettings: (pluginId: string | null) => {
       page().context.navigate("plugin-settings", {
@@ -61,6 +70,10 @@ export function PluginsPageView(props: { page: PluginsPageModel }) {
           : pathForRoute("plugin-settings", page().context.basePath),
         search: "",
       });
+    },
+    reviewPermissions: (pluginId: string, setting: string) => {
+      page().setState({ installedDetailTab: "configuration" });
+      page().context.navigate("plugin-settings", reviewPermissionsLocation(pluginId, setting));
     },
     retryConfigRead: () => {
       void page().context.runtimeConfig.refresh();
@@ -157,6 +170,11 @@ export function PluginsPageView(props: { page: PluginsPageModel }) {
     onConfigReadRetry: actions.retryConfigRead,
     onConfigWriteRetry: () => void page().context.runtimeConfig.retry(),
     onRefresh: () => void page().refreshCatalog(),
+    reviewPermissionsHref: (pluginId: string, setting: string) => {
+      const location = reviewPermissionsLocation(pluginId, setting);
+      return `${location.pathname}${location.search}`;
+    },
+    onReviewPermissions: actions.reviewPermissions,
     onAskPlugin: onAskPlugin(),
     onAskSetting: ask(),
   }));
@@ -235,6 +253,9 @@ export function PluginsPageView(props: { page: PluginsPageModel }) {
               : undefined
         }
         settingsHref={`${settingsLocation().pathname ?? ""}${settingsLocation().search}`}
+        focusSetting={
+          new URLSearchParams(page().routeData?.location.search).get("setting") ?? undefined
+        }
         configSchema={pluginConfigSchema(configAnalysis().schema, detailProps.pluginId)}
         hostControlsSchema={pluginHostControlsSchema(configAnalysis().schema, detailProps.pluginId)}
         backHref={

@@ -1153,6 +1153,13 @@ ${channelPluginSource({
       ),
     );
     expect(blockedDiagnostics).toHaveLength(1);
+    expect(registry.plugins.find((entry) => entry.id === "hook-policy")?.blockedHooks).toEqual([
+      {
+        hookName: "before_prompt_build",
+        reason: "prompt-injection-denied",
+        configPath: "plugins.entries.hook-policy.hooks.allowPromptInjection",
+      },
+    ]);
   });
 
   it("blocks next-turn injections when prompt injection is disabled", () => {
@@ -1499,6 +1506,15 @@ ${channelPluginSource({
       ),
     );
     expect(blockedDiagnostics).toHaveLength(9);
+    const blockedHooks = registry.plugins.find(
+      (entry) => entry.id === "conversation-hooks",
+    )?.blockedHooks;
+    expect(blockedHooks).toHaveLength(9);
+    expect(blockedHooks?.[0]).toEqual({
+      hookName: "before_model_resolve",
+      reason: "conversation-access-missing",
+      configPath: "plugins.entries.conversation-hooks.hooks.allowConversationAccess",
+    });
   });
 
   it("allows conversation typed hooks for non-bundled plugins when explicitly enabled", () => {
@@ -1542,6 +1558,9 @@ ${channelPluginSource({
       "agent_end",
       "before_agent_run",
     ]);
+    expect(
+      registry.plugins.find((entry) => entry.id === "conversation-hooks-allowed")?.blockedHooks,
+    ).toBeUndefined();
   });
 
   it("stores only valid before_agent_reply trigger eligibility", () => {

@@ -56,6 +56,8 @@ it("retains focused lifecycle controls across settings reads and uses current mu
     onConfigReadRetry: vi.fn(),
     onConfigWriteRetry: vi.fn(),
     onRefresh: vi.fn(),
+    reviewPermissionsHref: (pluginId, key) => `/settings/plugins/${pluginId}?setting=${key}`,
+    onReviewPermissions: vi.fn(),
   };
   let setProps!: Setter<DetailProps>;
   const { container } = mountSolid(() => {

@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { createSignal, flush } from "solid-js";
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { i18n } from "../../i18n/index.ts";
 import type { JsonSchema } from "../../lib/config-form-utils.ts";
 import { mountSolid } from "../../test-helpers/mount-solid.ts";
@@ -65,6 +65,8 @@ function mount(overrides: Partial<DetailProps>, setup?: (props: DetailProps) => 
     onConfigReadRetry: vi.fn(),
     onConfigWriteRetry: vi.fn(),
     onRefresh: vi.fn(),
+    reviewPermissionsHref: (pluginId, key) => `/settings/plugins/${pluginId}?setting=${key}`,
+    onReviewPermissions: vi.fn(),
     ...overrides,
   };
   const { container } = mountSolid(() => {
@@ -242,6 +244,70 @@ it("gives host permissions the setting menu and preserves configured, inherited,
   expect(readOnlyInput.disabled).toBe(true);
   readOnlyInput.click();
   expect(props.onConfigPatch).not.toHaveBeenCalled();
+});
+
+it("explains blocked hooks and focuses the permission a review opens", async () => {
+  // JSDOM has no layout or scrolling; record the request instead.
+  const scrollIntoView = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: scrollIntoView,
+  });
+  onTestFinished(() => {
+    delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+  });
+  const plugin = createPlugin({
+    id: "workboard",
+    runtime: {
+      state: "active",
+      blockedHooks: [
+        {
+          hookName: "before_prompt_build",
+          reason: "conversation-access-missing",
+          configPath: "plugins.entries.workboard.hooks.allowConversationAccess",
+        },
+        {
+          hookName: "llm_input",
+          reason: "conversation-access-missing",
+          configPath: "plugins.entries.workboard.hooks.allowConversationAccess",
+        },
+      ],
+    },
+  });
+  const { container, props } = mount({
+    tab: "configuration",
+    result: createResult([plugin]),
+    inspection: createInspectResult(),
+    focusSetting: "hooks.allowConversationAccess",
+    hostControlsSchema: objectSchema({
+      hooks: objectSchema({
+        allowPromptInjection: { type: "boolean" },
+        allowConversationAccess: { type: "boolean" },
+      }),
+    }),
+  });
+  await Promise.resolve();
+  flush();
+  const notice = container.querySelector(".plugins-row-message--warning")!;
+  expect(notice.textContent).toBe(
+    "These hooks need permission to read conversation context, so they are not running: before_prompt_build, llm_input. Review permissions",
+  );
+  const row = setting(container, "hooks.allowConversationAccess") as HTMLElement;
+  expect(row.hasAttribute("data-focus-target")).toBe(true);
+  expect(document.activeElement).toBe(row.querySelector("input"));
+  expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  expect(setting(container, "hooks.allowPromptInjection").hasAttribute("data-focus-target")).toBe(
+    false,
+  );
+  const review = notice.querySelector<HTMLAnchorElement>("a")!;
+  expect(review.getAttribute("href")).toBe(
+    "/settings/plugins/workboard?setting=hooks.allowConversationAccess",
+  );
+  review.click();
+  expect(props.onReviewPermissions).toHaveBeenCalledWith(
+    "workboard",
+    "hooks.allowConversationAccess",
+  );
 });
 
 it("shows selected capabilities without a catalog", () => {

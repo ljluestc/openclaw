@@ -11,6 +11,8 @@ export function pluginDetailLocation(
   settings: boolean,
 ) {
   const search = new URLSearchParams(location?.search);
+  // A permission review target applies to the navigation that requested it.
+  search.delete("setting");
   if (settings) {
     search.set("view", "settings");
   } else {
