@@ -131,6 +131,28 @@ it.each(["success", "failure"])(
   },
 );
 
+it("runs the review in the agent workspace so sandbox binds keep their source root", async () => {
+  // Sandbox bind sources are validated against the run's workspace. Rooting the review at
+  // workshop-skills refused the agent's configured binds before the first model call (#161452).
+  const workshopSkillsDir = resolveWorkshopSkillsDir(
+    candidate.config,
+    candidate.ctx.foregroundPromptContext.agentId,
+  );
+  let reviewParams: ReviewParams | undefined;
+  mocks.runEmbeddedAgent.mockImplementation(async (params: ReviewParams) => {
+    reviewParams = params;
+    return completedReview;
+  });
+
+  await runSkillExperienceReview(candidate);
+
+  const params = expectDefined(reviewParams, "review run params");
+  expect(params.workspaceDir).toBe(candidate.ctx.workspaceDir);
+  for (const root of [params.workspaceDir, params.cwd]) {
+    expect(root === undefined || !path.resolve(root).startsWith(workshopSkillsDir)).toBe(true);
+  }
+});
+
 it("yields an in-flight review when interactive work starts", async () => {
   const ownHandle = createEmbeddedRunHandle();
   const interactiveHandle = createEmbeddedRunHandle({ abort: vi.fn() });
