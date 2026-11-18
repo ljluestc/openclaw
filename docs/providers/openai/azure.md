@@ -19,7 +19,8 @@ Realtime voice uses a separate configuration path
 (`plugins.entries.voice-call.config.realtime.providers.openai.azureEndpoint`)
 and is not affected by `models.providers.openai.baseUrl`. See the **Realtime
 voice** accordion under [Voice and speech](/providers/openai/voice-and-speech) for its Azure
-settings.
+settings, including Azure Foundry `gpt-live-1` deployments for GPT-Live Talk
+through the Gateway relay.
 </Note>
 
 Use Azure OpenAI when:

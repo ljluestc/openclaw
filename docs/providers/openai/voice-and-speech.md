@@ -255,7 +255,9 @@ sidebarTitle: "Voice and speech"
     an explicit GPT-Live model is audio-only. Requests requiring video or forced
     agent-consult replies retain `gpt-realtime-2.1` when no model is pinned.
     Direct tool bridges, Discord and Voice Call without an explicit model, and Azure
-    deployments retain their existing defaults. An explicit GPT-Live model in
+    deployments retain their existing defaults (see
+    [GPT-Live on Azure Foundry](#gpt-live-on-azure-foundry) for an explicit Azure
+    GPT-Live route). An explicit GPT-Live model in
     Discord or Voice Call uses the shared Gateway relay bridge and provider-owned delegation.
     Installing an update does not rewrite saved configuration or switch an
     active session.
@@ -291,6 +293,54 @@ sidebarTitle: "Voice and speech"
 
     iOS uses the same brokered WebRTC path and displays public Live captions.
     Physical-device voice validation remains pending.
+
+    #### GPT-Live on Azure Foundry
+
+    An Azure Foundry `gpt-live-1` deployment can serve GPT-Live through the
+    Gateway relay. Set the model explicitly and point the provider block at the
+    Azure resource:
+
+    ```json5
+    {
+      talk: {
+        realtime: {
+          provider: "openai",
+          model: "gpt-live-1",
+          transport: "gateway-relay",
+          providers: {
+            openai: {
+              model: "gpt-live-1",
+              azureEndpoint: "https://<resource>.openai.azure.com",
+              azureDeployment: "<gpt-live-deployment>",
+              apiKey: "<azure-resource-key>", // or a secret reference
+            },
+          },
+        },
+      },
+    }
+    ```
+
+    The Gateway opens `wss://<resource>.openai.azure.com/openai/v1/live/sessions`,
+    authenticates with the `api-key` header, and sends the deployment name as the
+    `session.start` model (`gpt-live-1` when `azureDeployment` is unset). The
+    endpoint may be the resource root or end in `/openai` or `/openai/v1`, and
+    must use `https://`. Agent delegation, transcripts, and `session.close`
+    cleanup work the same as the public GPT-Live API.
+
+    Azure GPT-Live has these limits:
+
+    - Only the Gateway relay is supported. Browser WebRTC is unavailable, so
+      Talk does not offer it for this configuration.
+    - The Azure key must be set in this provider block's `apiKey`.
+      `OPENAI_API_KEY` and OpenAI auth profiles are never sent to Azure.
+    - Only `gpt-live-1` is supported. `gpt-live-1-codex` needs ChatGPT
+      sign-in on OpenAI.
+    - GPT-Live uses the Azure v1 Live API, so remove `azureApiVersion`.
+    - Microsoft Entra ID / managed identity is not supported yet.
+
+    An unsupported combination fails when the session starts, with a message
+    naming the setting to change. Without an explicit GPT-Live model, Azure
+    settings keep the GA Realtime deployment route.
 
     The default voice is `marin`. Supported built-in voices are `alloy`, `ash`,
     `ballad`, `beacon`, `bossa`, `cedar`, `cinder`, `coral`, `delta`, `echo`,

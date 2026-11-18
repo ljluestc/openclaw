@@ -92,6 +92,8 @@ export type { OpenAIQuicksilverInboundEvent } from "./realtime-quicksilver-event
 
 export function buildOpenAIQuicksilverSession(params: {
   model: string;
+  /** Provider-side model id when it differs from the protocol model (an Azure deployment name). */
+  wireModel?: string;
   hostControlsInput?: boolean;
   instructions?: string;
   voice?: string;
@@ -118,7 +120,7 @@ export function buildOpenAIQuicksilverSession(params: {
     ],
   }));
   return {
-    model: params.model,
+    model: params.wireModel ?? params.model,
     instructions:
       instructions +
       (params.hostControlsInput
@@ -161,6 +163,43 @@ export function buildOpenAIQuicksilverWebSocketUrl(model: string): string {
   url.protocol = "wss:";
   url.searchParams.set("model", model);
   return url.toString();
+}
+
+/**
+ * Azure Foundry serves GPT-Live on the public Live API path under its v1 surface.
+ * Accepts the same endpoint spellings as the Azure GA Realtime route.
+ */
+export function buildAzureOpenAIGptLiveWebSocketUrl(endpoint: string): string {
+  let url: URL;
+  try {
+    url = new URL(endpoint.trim());
+  } catch {
+    throw new Error("Azure GPT-Live azureEndpoint must be an https:// URL");
+  }
+  // The api-key header must never travel over plaintext.
+  if (url.protocol !== "https:" && url.protocol !== "wss:") {
+    throw new Error("Azure GPT-Live azureEndpoint must be an https:// URL");
+  }
+  const basePath = url.pathname.replace(/\/+$/u, "").replace(/\/openai(?:\/v1)?$/iu, "");
+  url.protocol = "wss:";
+  url.pathname = `${basePath}/openai/v1/live/sessions`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+/** Azure API-key auth for GPT-Live; OpenAI account and session headers stay off Azure hosts. */
+export function azureOpenAIGptLiveAuthHeaders(
+  apiKey: string,
+  runtime: OpenAIRealtimeHost,
+  url: string,
+): Record<string, string> {
+  return resolveOpenAIRealtimeRequestHeaders(
+    runtime,
+    url.replace(/^wss:/u, "https:"),
+    { "api-key": apiKey },
+    "websocket",
+  );
 }
 
 function truncateOpenAIQuicksilverContextText(text: string, maxBytes: number): string {

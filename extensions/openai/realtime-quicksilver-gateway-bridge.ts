@@ -45,6 +45,7 @@ import type {
 import {
   buildOpenAIQuicksilverSession,
   buildOpenAIQuicksilverSessionUpdate,
+  azureOpenAIGptLiveAuthHeaders,
   buildOpenAIQuicksilverWebSocketUrl,
   createOpenAIQuicksilverCall,
   createOpenAIQuicksilverRequestIds,
@@ -56,6 +57,13 @@ import {
   isOpenAIGptLiveSubscriptionModel,
 } from "./realtime-quicksilver.js";
 
+type OpenAIGptLiveAzureTarget = {
+  /** wss:// Live sessions URL on the Azure resource. */
+  url: string;
+  /** Deployment name sent as session.start model. */
+  deployment: string;
+};
+
 const RELAY_SAMPLE_RATE = 24_000;
 const QUICKSILVER_SESSION_TTL_MS = 30 * 60_000;
 const QUICKSILVER_CONNECT_TIMEOUT_MS = 30_000;
@@ -66,6 +74,8 @@ type OpenAIQuicksilverBridgeConfig = RealtimeVoiceBridgeCreateRequest & {
   voice?: string;
   logger: Pick<PluginLogger, "debug" | "warn">;
   resolveAuth: () => Promise<OpenAIQuicksilverAuth>;
+  /** Azure Foundry target; Azure sessions always use the direct WebSocket transport. */
+  azure?: OpenAIGptLiveAzureTarget;
   createPeer?: (
     callbacks: OpenAIQuicksilverAudioPeerCallbacks,
     signal: AbortSignal,
@@ -258,10 +268,11 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
     this.delegations = this.createDelegationController({
       onSessionStarted: ready.resolve,
     });
+    const azure = this.config.azure;
     await this.connectSocket(
       auth,
       requestIds,
-      buildOpenAIQuicksilverWebSocketUrl(this.config.model),
+      azure?.url ?? buildOpenAIQuicksilverWebSocketUrl(this.config.model),
       connectSignal,
     );
     if (!this.closed && this.audioOutput) {
@@ -269,6 +280,7 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
     }
     const event = buildOpenAIQuicksilverSessionUpdate({
       model: this.config.model,
+      wireModel: azure?.deployment,
       hostControlsInput: true,
       instructions: this.config.instructions,
       voice: this.config.voice,
@@ -407,6 +419,9 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
         requestIds,
         signal: connectSignal,
         url,
+        ...(this.config.azure
+          ? { headers: azureOpenAIGptLiveAuthHeaders(auth.token, this.runtime, url) }
+          : {}),
       },
       this.runtime,
     );

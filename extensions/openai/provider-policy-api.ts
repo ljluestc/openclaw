@@ -30,7 +30,11 @@ import {
   OPENAI_GPT_56_SOL_MODEL_ID,
 } from "./model-route-contract.js";
 import manifest from "./openclaw.plugin.json" with { type: "json" };
-import { isOpenAIGptLiveModel, isSupportedOpenAIGptLiveModel } from "./realtime-quicksilver.js";
+import {
+  isOpenAIGptLiveApiModel,
+  isOpenAIGptLiveModel,
+  isSupportedOpenAIGptLiveModel,
+} from "./realtime-quicksilver.js";
 import { resolveOpenAIModelServiceTiers } from "./service-tier-policy.js";
 import { resolveUnifiedOpenAIThinkingProfile } from "./thinking-policy.js";
 
@@ -134,17 +138,24 @@ export function projectRealtimeVoicePublicProjection(ctx: {
     return { config: ctx.config };
   }
   if (isSupportedOpenAIGptLiveModel(modelId)) {
+    const isAzureConfigured = Boolean(
+      normalizeOptionalString(ctx.providerConfig.azureEndpoint) ||
+      normalizeOptionalString(ctx.providerConfig.azureDeployment),
+    );
     // Advertise model/transport support, not credential readiness. Session creation
     // still resolves the selected agent's auth and validates the relay launch.
     return {
       config: ctx.config,
-      // GPT-Live owns delegation; forced consult and Azure configs require native Talk.
+      // GPT-Live owns delegation; forced consult and baseUrl configs require native Talk.
+      // Azure relays only gpt-live-1 over its v1 Live API (no api-version).
       clientHints: {
         gatewayRelaySupported:
           ctx.config.consultRouting !== "force-agent-consult" &&
           !normalizeOptionalString(ctx.providerConfig.baseUrl) &&
-          !normalizeOptionalString(ctx.providerConfig.azureEndpoint) &&
-          !normalizeOptionalString(ctx.providerConfig.azureDeployment),
+          (!isAzureConfigured ||
+            (isOpenAIGptLiveApiModel(modelId) &&
+              Boolean(normalizeOptionalString(ctx.providerConfig.azureEndpoint)) &&
+              !normalizeOptionalString(ctx.providerConfig.azureApiVersion))),
       },
     };
   }

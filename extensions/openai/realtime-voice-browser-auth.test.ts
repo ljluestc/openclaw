@@ -495,6 +495,40 @@ describe("OpenAI realtime public projection", () => {
     }
   });
 
+  it("advertises the Azure GPT-Live relay only for gpt-live-1 on the v1 Live API", async () => {
+    const { api, project, relayConfigured } = projectionFixture(true);
+    vi.stubEnv("OPENAI_API_KEY", "openai-platform-key");
+    const azure = {
+      model: "gpt-live-1",
+      apiKey: "azure-resource-key",
+      azureEndpoint: "https://example.openai.azure.com",
+      azureDeployment: "live-prod",
+    };
+    for (const [override, supported] of [
+      [{}, true],
+      [{ azureApiVersion: "2025-08-28" }, false],
+      [{ azureEndpoint: undefined }, false],
+      [{ model: "gpt-live-1-codex" }, false],
+    ] as const) {
+      const config = { ...azure, ...override };
+      expect(project(config).clientHints).toEqual({ gatewayRelaySupported: supported });
+      expect(await relayConfigured(config)).toBe(supported);
+    }
+    // Projection advertises transport support; readiness still needs the Azure key.
+    const keyless = { ...azure, apiKey: undefined };
+    expect(project(keyless).clientHints).toEqual({ gatewayRelaySupported: true });
+    expect(await relayConfigured(keyless)).toBe(false);
+    expect(api.validateGatewayRelayLaunch?.({ providerConfig: keyless, model: "gpt-live-1" })).toBe(
+      "Azure GPT-Live requires the Azure resource key in this provider's apiKey",
+    );
+    expect(
+      api.resolveGatewayRelayCapabilities?.({ providerConfig: azure, model: "gpt-live-1" }),
+    ).toMatchObject({ transports: ["gateway-relay"], supportsBrowserSession: false });
+    expect(
+      await api.isBrowserSessionConfiguredAsync?.({ providerConfig: azure, agentId: "main" }),
+    ).toBe(false);
+  });
+
   it("admits opaque realtime models without publishing them", async () => {
     const { provider, api, project, relayConfigured } = projectionFixture(true);
     const providerConfig = { apiKey: "test-api-key-platform", model: OPAQUE_REALTIME_MODEL };

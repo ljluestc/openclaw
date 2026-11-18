@@ -23,8 +23,10 @@ import { OpenAIQuicksilverVoiceBridge } from "./realtime-quicksilver-bridge.js";
 import { OpenAIQuicksilverGatewayBridge } from "./realtime-quicksilver-gateway-bridge.js";
 import { buildOpenAIQuicksilverInstructions } from "./realtime-quicksilver-instructions.js";
 import type { OpenAIQuicksilverBrowserSessionBroker } from "./realtime-quicksilver-session.js";
+import { buildAzureOpenAIGptLiveWebSocketUrl } from "./realtime-quicksilver-wire.js";
 import {
   OPENAI_QUICKSILVER_CAPABILITIES,
+  isOpenAIGptLiveApiModel,
   isOpenAIGptLiveModel,
   isOpenAIGptLiveSubscriptionModel,
   resolveOpenAIQuicksilverVoiceCapabilities,
@@ -42,6 +44,7 @@ import {
   hasOpenAIChatGptSubscriptionAuthInput,
   hasOpenAIChatGptSubscriptionAuthInputAsync,
   hasOpenAIRealtimeApiKeyInput,
+  hasOpenAIRealtimeConfiguredApiKeyInput,
   hasOpenAIRealtimePlatformAuthInput,
   hasOpenAIRealtimePlatformAuthInputAsync,
   normalizeOpenAIRealtimeTools,
@@ -49,6 +52,7 @@ import {
   normalizeProviderConfig,
   requireOpenAIRealtimePlatformAuth,
   resolveOpenAIRealtimePlatformAuth,
+  resolveOpenAIRealtimeSecretInput,
   resolveOpenAIQuicksilverBridgeAuth,
   type OpenAIRealtimeVoiceProviderConfig,
 } from "./realtime-voice-session-policy.js";
@@ -59,6 +63,34 @@ const CUSTOM_ENDPOINT_CAPABILITIES: RealtimeVoiceProviderCapabilities = {
   transports: ["gateway-relay"],
   supportsBrowserSession: false,
 };
+
+function isAzureOpenAIRealtimeConfig(config: OpenAIRealtimeVoiceProviderConfig): boolean {
+  return Boolean(config.azureEndpoint || config.azureDeployment);
+}
+
+/**
+ * Azure GPT-Live is a Gateway-relay route over the Azure v1 Live API with a configured
+ * Azure API key. Returns the next step for an unsupported config, or undefined.
+ */
+function describeAzureGptLiveConfigProblem(
+  config: OpenAIRealtimeVoiceProviderConfig,
+  model: string | undefined,
+): string | undefined {
+  if (!isOpenAIGptLiveApiModel(model)) {
+    return "Azure GPT-Live supports model gpt-live-1 only; gpt-live-1-codex requires ChatGPT sign-in on OpenAI";
+  }
+  if (!config.azureEndpoint) {
+    return "Azure GPT-Live requires azureEndpoint (https://<resource>.openai.azure.com)";
+  }
+  if (config.azureApiVersion) {
+    return "Azure GPT-Live uses the Azure v1 Live API; remove azureApiVersion";
+  }
+  // OPENAI_API_KEY belongs to another account and is never sent to an Azure host.
+  if (!hasOpenAIRealtimeConfiguredApiKeyInput(config.apiKey)) {
+    return "Azure GPT-Live requires the Azure resource key in this provider's apiKey";
+  }
+  return undefined;
+}
 
 function prepareOpenAIRealtimeVoiceConfig({
   rawConfig,
@@ -197,17 +229,40 @@ export function buildOpenAIRealtimeVoiceProvider(
             "OpenAI realtime baseUrl does not support GPT-Live; select a Realtime-compatible model",
           );
         }
-        if (config.azureEndpoint || config.azureDeployment) {
-          throw new Error(
-            "GPT-Live backend WebSocket sessions do not support Azure endpoints or deployments",
-          );
-        }
         const bridgeConfig = {
           ...req,
           model,
           voice: config.voice,
           instructions: buildOpenAIQuicksilverInstructions(model, req.instructions),
         };
+        if (isAzureOpenAIRealtimeConfig(config)) {
+          const problem = describeAzureGptLiveConfigProblem(config, model);
+          if (problem) {
+            throw new Error(problem);
+          }
+          if (!req.runAgentConsult) {
+            throw new Error("Azure GPT-Live is available only through the Talk Gateway relay");
+          }
+          const configuredApiKey = config.apiKey;
+          return new OpenAIQuicksilverGatewayBridge(
+            {
+              ...bridgeConfig,
+              logger: options?.logger ?? { debug: () => undefined, warn: () => undefined },
+              azure: {
+                url: buildAzureOpenAIGptLiveWebSocketUrl(config.azureEndpoint ?? ""),
+                deployment: config.azureDeployment ?? model,
+              },
+              resolveAuth: async () => {
+                const token = resolveOpenAIRealtimeSecretInput(configuredApiKey);
+                if (!token) {
+                  throw new Error("Azure GPT-Live could not resolve the configured apiKey");
+                }
+                return { type: "api-key", token };
+              },
+            },
+            context,
+          );
+        }
         const authParams = {
           configuredApiKey: config.apiKey,
           cfg: req.cfg,
@@ -477,6 +532,12 @@ export function buildOpenAIRealtimeVoiceProvider(
     ...resolveOpenAIQuicksilverVoiceCapabilities(model),
     ...(supportsGatewayControl ? { supportsGatewayControl: true } : {}),
   });
+  // Azure GPT-Live has no browser WebRTC route; Talk must use the Gateway relay.
+  const projectAzureGptLiveCapabilities = (model: string): RealtimeVoiceProviderCapabilities => ({
+    ...projectGptLiveCapabilities(model),
+    transports: ["gateway-relay"],
+    supportsBrowserSession: false,
+  });
   const internalApi: InternalRealtimeVoiceProviderApi = {
     // Retained for public synchronous SDK calls through 2026-12-31.
     isBrowserSessionConfigured: ({ cfg, providerConfig, agentId }) => {
@@ -495,6 +556,9 @@ export function buildOpenAIRealtimeVoiceProvider(
         return CUSTOM_ENDPOINT_CAPABILITIES;
       }
       const effectiveModel = model ?? config.model ?? "";
+      if (isOpenAIGptLiveModel(effectiveModel) && isAzureOpenAIRealtimeConfig(config)) {
+        return projectAzureGptLiveCapabilities(effectiveModel);
+      }
       if (isOpenAIGptLiveModel(effectiveModel)) {
         // Native delegation callbacks alone do not grant Gateway control of client media.
         const supportsGatewayControl =
@@ -529,6 +593,9 @@ export function buildOpenAIRealtimeVoiceProvider(
         return CUSTOM_ENDPOINT_CAPABILITIES;
       }
       const effectiveModel = model ?? config.model ?? "";
+      if (isOpenAIGptLiveModel(effectiveModel) && isAzureOpenAIRealtimeConfig(config)) {
+        return projectAzureGptLiveCapabilities(effectiveModel);
+      }
       if (isOpenAIGptLiveModel(effectiveModel)) {
         // Native delegation callbacks alone do not grant Gateway control of client media.
         const supportsGatewayControl =
@@ -556,8 +623,11 @@ export function buildOpenAIRealtimeVoiceProvider(
       if (!isOpenAIGptLiveModel(config.model)) {
         return undefined;
       }
-      if (config.baseUrl || config.azureEndpoint || config.azureDeployment) {
+      if (config.baseUrl) {
         return false;
+      }
+      if (isAzureOpenAIRealtimeConfig(config)) {
+        return describeAzureGptLiveConfigProblem(config, config.model) === undefined;
       }
       return (
         hasOpenAIRealtimePlatformAuthInput(
@@ -573,8 +643,11 @@ export function buildOpenAIRealtimeVoiceProvider(
       if (!isOpenAIGptLiveModel(config.model)) {
         return undefined;
       }
-      if (config.baseUrl || config.azureEndpoint || config.azureDeployment) {
+      if (config.baseUrl) {
         return false;
+      }
+      if (isAzureOpenAIRealtimeConfig(config)) {
+        return describeAzureGptLiveConfigProblem(config, config.model) === undefined;
       }
       return (
         (await hasOpenAIRealtimePlatformAuthInputAsync(
@@ -590,8 +663,11 @@ export function buildOpenAIRealtimeVoiceProvider(
       if (config.baseUrl) {
         return CUSTOM_ENDPOINT_CAPABILITIES;
       }
-      if (isOpenAIGptLiveModel(model ?? config.model)) {
-        return projectGptLiveCapabilities(model ?? config.model ?? "");
+      const effectiveModel = model ?? config.model;
+      if (isOpenAIGptLiveModel(effectiveModel)) {
+        return isAzureOpenAIRealtimeConfig(config)
+          ? projectAzureGptLiveCapabilities(effectiveModel ?? "")
+          : projectGptLiveCapabilities(effectiveModel ?? "");
       }
       return OPENAI_REALTIME_CAPABILITIES;
     },
@@ -603,6 +679,9 @@ export function buildOpenAIRealtimeVoiceProvider(
       }
       if (autoRespondToAudio === false && isOpenAIGptLiveModel(model ?? config.model)) {
         return "GPT-Live gateway-relay sessions cannot use forced agent consult routing; GPT-Live delegates to the agent natively";
+      }
+      if (isOpenAIGptLiveModel(model ?? config.model) && isAzureOpenAIRealtimeConfig(config)) {
+        return describeAzureGptLiveConfigProblem(config, model ?? config.model);
       }
       return undefined;
     },

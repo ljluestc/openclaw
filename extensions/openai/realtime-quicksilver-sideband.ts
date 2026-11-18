@@ -109,6 +109,8 @@ export async function connectOpenAIQuicksilverSideband(
     requestIds: OpenAIQuicksilverRequestIds;
     signal: AbortSignal;
     url: string;
+    /** Replaces OpenAI auth headers for non-OpenAI hosts (Azure). */
+    headers?: Record<string, string>;
   },
   runtime: OpenAIRealtimeHost,
 ) {
@@ -118,7 +120,9 @@ export async function connectOpenAIQuicksilverSideband(
       throw params.signal.reason;
     }
     const socket = params.createSocket(params.url, {
-      headers: openAIQuicksilverAuthHeaders(params.auth, params.requestIds, runtime, params.url),
+      headers:
+        params.headers ??
+        openAIQuicksilverAuthHeaders(params.auth, params.requestIds, runtime, params.url),
       maxPayload: SIDEBAND_MAX_PAYLOAD_BYTES,
     });
     const bufferedFrames: OpenAIQuicksilverBufferedFrame[] = [];

@@ -226,6 +226,44 @@ describe("GPT-Live Gateway direct transport", () => {
     }
   });
 
+  it("connects Azure GPT-Live with the Azure key and deployment, never OpenAI headers", async () => {
+    const { bridge, start, webSocketFactory } = createHarness({
+      resolveAuth: async () => ({ type: "api-key", token: "azure-resource-key" }),
+      azure: {
+        url: "wss://example.openai.azure.com/openai/v1/live/sessions",
+        deployment: "live-prod",
+      },
+    });
+    try {
+      const { socket, connection } = await start();
+      expect(webSocketFactory).toHaveBeenCalledOnce();
+      const [url, options] = webSocketFactory.mock.calls[0] as unknown as [
+        string,
+        { headers: Record<string, string> },
+      ];
+      expect(url).toBe("wss://example.openai.azure.com/openai/v1/live/sessions");
+      expect(options.headers["api-key"]).toBe("azure-resource-key");
+      const headerNames = Object.keys(options.headers).map((name) => name.toLowerCase());
+      for (const forbidden of ["authorization", "session-id", "thread-id", "x-session-id"]) {
+        expect(headerNames).not.toContain(forbidden);
+      }
+      expect(parseSent(socket)[0]).toMatchObject({
+        type: "session.start",
+        session: { model: "live-prod", delegation: { type: "client" } },
+      });
+      emitSideband(socket, { type: "session.started", session: {} });
+      await connection;
+      const closing = bridge.close();
+      await vi.waitFor(() =>
+        expect(parseSent(socket).some((event) => event.type === "session.close")).toBe(true),
+      );
+      closeReceipt(socket);
+      await closing;
+    } finally {
+      await bridge.close();
+    }
+  });
+
   it("keeps public capacity and transcript ownership until connection-lost finalization", async () => {
     const runAgentConsult = vi.fn(async () => ({ text: "must not start" }));
     const harness = createHarness({ runAgentConsult });
